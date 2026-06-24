@@ -34,7 +34,7 @@
     font-size: 13px;
     margin-bottom: 18px;
   }
-  .sub { color: #94a3b8; font-size: 14px; margin-bottom: 36px; line-height: 1.6; }
+  .sub { color: #94a3b8; font-size: 14px; margin-bottom: 36px; }
   .card {
     background: rgba(17, 24, 39, 0.6);
     border: 1px solid rgba(148, 163, 184, 0.15);
@@ -90,12 +90,15 @@
   }
   #bookmarklet:hover { transform: translateY(-2px); }
   #bookmarklet:active { cursor: grabbing; }
-  .hint {
+  #bookmarklet.loading {
+    background: rgba(100, 116, 139, 0.3);
     color: #64748b;
-    font-size: 12px;
-    margin-top: 16px;
-    font-style: italic;
+    cursor: wait;
+    pointer-events: none;
   }
+  .hint { color: #64748b; font-size: 12px; margin-top: 16px; font-style: italic; }
+  .ok { color: #10b981; font-weight: 600; }
+  .erro { color: #ef4444; font-weight: 600; }
   code {
     background: rgba(124, 58, 237, 0.15);
     padding: 2px 7px;
@@ -103,22 +106,15 @@
     color: #c4b5fd;
     font-size: 12px;
   }
-  .pulse {
-    animation: pulse 2s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { box-shadow: 0 4px 20px rgba(6, 182, 212, 0.4); }
-    50%      { box-shadow: 0 4px 28px rgba(6, 182, 212, 0.7); }
-  }
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <h1>📊 Monitor Last Mile</h1>
-  <span class="ver">v2.0 — entregues, insucessos, PNR e mais</span>
-  <p class="sub">Painel flutuante de monitoramento Last Mile do Mercado Livre.<br>
-  Funciona em qualquer página — basta clicar no favorito.</p>
+  <span class="ver">v2.0 — funciona no Mercado Livre</span>
+  <p class="sub">Painel flutuante de monitoramento Last Mile.<br>
+  Compatível com a política de segurança (CSP) do ML.</p>
 
   <div class="card">
     <h2>✓ O que ele faz</h2>
@@ -128,45 +124,63 @@
       <li><b>Exports:</b> CSV, Excel e PDF print-ready</li>
       <li><b>Importação de Agenda</b> CSV (placa, telefone, hub)</li>
       <li><b>Modais</b> de Report Hora a Hora e Fechamento</li>
-      <li><b>Drag & drop, zoom, min/max</b> e auto-refresh</li>
+      <li><b>Funciona em qualquer página do ML</b></li>
     </ul>
   </div>
 
   <div class="card install">
     <h2>📌 Instalar — arraste pra barra de favoritos</h2>
     <p>Arraste o botão abaixo para a barra de favoritos:</p>
-    <a id="bookmarklet" class="pulse"
-       href="javascript:(function(){var s=document.createElement('script');s.src='https://kelvinkennedyfs-bit.github.io/monitor-lastmile/monitor.js?t='+Date.now();document.body.appendChild(s);})();">
+    <a id="bookmarklet" class="loading" href="javascript:alert('Aguarde, gerando...');">
       📊 Monitor Last Mile
     </a>
-    <div class="hint">⇧ Arraste com o mouse pra cima, na barra de favoritos</div>
+    <div class="hint" id="status">⏳ Carregando código mais recente...</div>
   </div>
 
   <div class="card">
     <h2>🚀 Como usar</h2>
     <ul>
       <li><b>1.</b> Arrasta o botão acima pra barra de favoritos</li>
-      <li><b>2.</b> Abre o Last Mile do ML (ou qualquer outra página)</li>
+      <li><b>2.</b> Vai pra página do Last Mile do ML</li>
       <li><b>3.</b> Clica no favorito → painel aparece flutuando</li>
-      <li><b>4.</b> Clicar de novo recarrega o painel com a versão mais nova</li>
     </ul>
   </div>
 
   <div class="card">
-    <h2>💡 Não vê a barra de favoritos?</h2>
+    <h2>💡 Dicas</h2>
     <ul>
-      <li><b>Chrome / Edge / Firefox:</b> <code>Ctrl + Shift + B</code></li>
-    </ul>
-  </div>
-
-  <div class="card">
-    <h2>🔄 Atualizações automáticas</h2>
-    <ul>
-      <li>Quando o código for atualizado no servidor, <b>todos os usuários</b> recebem a nova versão na próxima vez que clicarem no favorito.</li>
-      <li>Não precisa reinstalar nada.</li>
+      <li><b>Não vê a barra de favoritos?</b> <code>Ctrl + Shift + B</code></li>
+      <li><b>Atualizar pra nova versão:</b> abre essa página de novo, arrasta o botão (substitui o anterior)</li>
     </ul>
   </div>
 
 </div>
+
+<script>
+fetch('monitor.js?v=' + Date.now())
+  .then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.text();
+  })
+  .then(function (codigo) {
+    var encoded = encodeURIComponent(codigo);
+    var bkm = 'javascript:(function(){try{eval(decodeURIComponent("' + encoded +
+              '"));}catch(e){alert("Erro no Monitor: "+e.message);}})();';
+
+    var btn = document.getElementById('bookmarklet');
+    btn.href = bkm;
+    btn.classList.remove('loading');
+
+    var sizeKB = (bkm.length / 1024).toFixed(1);
+    document.getElementById('status').innerHTML =
+      '<span class="ok">✓ Bookmarklet pronto: ' + sizeKB + ' KB · ' +
+      codigo.length.toLocaleString('pt-BR') + ' caracteres no código embutido</span>';
+  })
+  .catch(function (err) {
+    document.getElementById('status').innerHTML =
+      '<span class="erro">⚠ Erro: ' + err.message + '</span>';
+  });
+</script>
+
 </body>
 </html>
