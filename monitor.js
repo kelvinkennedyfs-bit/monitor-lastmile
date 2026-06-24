@@ -199,7 +199,7 @@
   };
 
   var STATE = {
-    SSCS: ['SRJ3', 'SSP2', 'SSZ1', 'SBH1', 'SPO1', 'SCT1', 'SBR1', 'SSP1'],
+    SSCS: ['SRJ1', 'SRJ3', 'SRJ5', 'SRJ7', 'SRJ8', 'SRJ10', 'SES1', 'SES2'],
     ssc: 'SRJ3',
     date: new Date().toISOString().slice(0, 10),
     routes: [], lastFetch: null, loading: false,
@@ -215,6 +215,7 @@
     expanded: {},
     refreshMs: 600000, refreshPaused: false, nextRefreshAt: 0
   };
+  APP.STATE = STATE; APP.render = function(){ if(typeof renderKPIs==='function')renderKPIs(); if(typeof renderActiveTab==='function')renderActiveTab(); };
 
   var Agenda = {
     KEY: 'mlm_srj3_agenda_v2', DATE_KEY: 'mlm_srj3_agenda_date', data: {},
