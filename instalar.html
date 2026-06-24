@@ -163,9 +163,14 @@ fetch('monitor.js?v=' + Date.now())
     return r.text();
   })
   .then(function (codigo) {
-    var encoded = encodeURIComponent(codigo);
-    var bkm = 'javascript:(function(){try{eval(decodeURIComponent("' + encoded +
-              '"));}catch(e){alert("Erro no Monitor: "+e.message);}})();';
+    function utf8ToBase64(str) {
+      return btoa(unescape(encodeURIComponent(str)));
+    }
+    var b64 = utf8ToBase64(codigo);
+    var bkm = "javascript:(function(){try{var s=document.createElement('script');" +
+              "s.textContent=decodeURIComponent(escape(atob('" + b64 + "')));" +
+              "document.documentElement.appendChild(s);s.remove();}" +
+              "catch(e){alert('Erro no Monitor: '+e.message);}})();";
 
     var btn = document.getElementById('bookmarklet');
     btn.href = bkm;
@@ -174,7 +179,7 @@ fetch('monitor.js?v=' + Date.now())
     var sizeKB = (bkm.length / 1024).toFixed(1);
     document.getElementById('status').innerHTML =
       '<span class="ok">✓ Bookmarklet pronto: ' + sizeKB + ' KB · ' +
-      codigo.length.toLocaleString('pt-BR') + ' caracteres no código embutido</span>';
+      codigo.length.toLocaleString('pt-BR') + ' caracteres embutidos (base64)</span>';
   })
   .catch(function (err) {
     document.getElementById('status').innerHTML =
