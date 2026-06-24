@@ -1,6 +1,6 @@
 /* ============================================================================
- * MONITOR LAST MILE — API REAL (Mercado Livre)
- * Intercepta o getMockData do monitor.js e substitui pelos endpoints reais
+ * MONITOR LAST MILE — API REAL (Mercado Livre) v3.1
+ * Substitui dados mock pelos endpoints reais do ML
  * ============================================================================ */
 (function () {
   'use strict';
@@ -10,7 +10,7 @@
               location.hostname.indexOf('mercadolivre.com') >= 0;
 
   if (!IS_ML) {
-    console.log('[MLM API] Fora do dominio ML - mantendo dados mock');
+    console.log('[MLM API] Fora do dominio ML - mantendo mock');
     return;
   }
 
@@ -50,27 +50,27 @@
       method: 'POST', credentials: 'include',
       headers: headers, body: JSON.stringify(body)
     }).then(function (r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status + ' em ' + url);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     });
   }
 
   function fetchAllRoutes(ssc) {
-    var allRoutes = [];
+    var all = [];
     var maxPages = 20;
-    function fetchPage(p) {
+    function page(p) {
       return apiPost(ENDPOINTS.routes, {
         serviceCenterId: ssc, siteId: 'MLB',
         page: p, pageSize: 50, order_by: 'performance'
       }).then(function (data) {
-        if (data && data.routes) allRoutes = allRoutes.concat(data.routes);
+        if (data && data.routes) all = all.concat(data.routes);
         if (data && data.pagination && data.pagination.hasNext && p < maxPages) {
-          return fetchPage(p + 1);
+          return page(p + 1);
         }
-        return allRoutes;
+        return all;
       });
     }
-    return fetchPage(1);
+    return page(1);
   }
 
   function fetchMetrics(ssc) {
@@ -79,13 +79,11 @@
       names: [
         'routes_summary', 'routes_active_metric_summary',
         'routes_not_delivered_metric_summary', 'routes_mixed_metric_summary',
-        'routes_dedicated_delivery_metric_summary',
         'packages_pending_metric_summary', 'packages_delivered_metric_summary',
         'packages_not_delivered_metric_summary', 'packages_not_pickup_metric_summary',
         'packages_pickup_metric_summary', 'bag_metric_summary',
         'general_status_ok_metric', 'general_status_not_ok_metric',
-        'general_status_regular_metric', 'general_status_inactive_metric',
-        'general_status_not_calculated_metric_summary'
+        'general_status_inactive_metric'
       ]
     });
   }
@@ -134,93 +132,78 @@
   function fetchRealData() {
     var ssc = (window.__MLM_SRJ3__ && window.__MLM_SRJ3__.STATE && window.__MLM_SRJ3__.STATE.ssc)
               || detectCurrentSSC();
-    console.log('[MLM API] Buscando dados reais do SSC:', ssc);
+    console.log('[MLM API] Buscando dados reais SSC:', ssc);
     return Promise.all([
       fetchAllRoutes(ssc).catch(function (err) {
-        console.error('[MLM API] Erro nas rotas:', err);
-        return [];
+        console.error('[MLM API] Erro rotas:', err); return [];
       }),
       fetchMetrics(ssc).catch(function (err) {
-        console.error('[MLM API] Erro nas metricas:', err);
-        return {};
+        console.error('[MLM API] Erro metricas:', err); return {};
       })
     ]).then(function (results) {
       var rawRoutes = results[0];
       var metrics   = results[1];
-      console.log('[MLM API] Rotas recebidas:', rawRoutes.length);
-      console.log('[MLM API] Metricas recebidas:', metrics);
+      console.log('[MLM API] Rotas:', rawRoutes.length, '| Metricas:', metrics);
       window.__MLM_METRICS__ = metrics;
       return rawRoutes.map(mapRoute);
     });
   }
 
-  // ===== MAGIC: Intercepta o fetch interno do monitor.js =====
-  // Monkey-patch: substitui a Promise mockada por dados reais
-  function patchMonitor() {
-    var maxTries = 100;
-    var tries = 0;
-
-    function tryPatch() {
-      tries++;
-      var app = window.__MLM_SRJ3__;
-      if (!app || !app.panel) {
-        if (tries < maxTries) return setTimeout(tryPatch, 100);
-        console.warn('[MLM API] Painel nao encontrado apos 10s');
-        return;
-      }
-
-      // Substitui o setInterval do refresh por uma versao que usa dados reais
-      // E forca um refresh imediato com dados reais
-      console.log('[MLM API] Patch aplicado - forcando refresh com dados reais');
-
-      // Acessa o STATE interno
-      var state = app.STATE;
-      if (!state) {
-        // Tenta achar pelo escopo global
-        console.warn('[MLM API] STATE nao exposto, usando intercepcao via fetch');
-      }
-
-      // Faz primeiro fetch real
-      fetchRealData().then(function (routes) {
-        if (app.STATE) {
-          app.STATE.routes = routes;
-          app.STATE.lastFetch = Date.now();
-        }
-        // Forca re-renderizacao
-        if (typeof app.renderKPIs === 'function') app.renderKPIs();
-        if (typeof app.renderActiveTab === 'function') app.renderActiveTab();
-        console.log('[MLM API] ✓ Dados reais carregados:', routes.length, 'rotas');
-      }).catch(function (err) {
-        console.error('[MLM API] Falha ao carregar dados reais:', err);
-      });
-
-      // Re-aplica a cada 60 segundos
-      setInterval(function () {
-        fetchRealData().then(function (routes) {
-          if (app.STATE) {
-            app.STATE.routes = routes;
-            app.STATE.lastFetch = Date.now();
-          }
-          if (typeof app.renderKPIs === 'function') app.renderKPIs();
-          if (typeof app.renderActiveTab === 'function') app.renderActiveTab();
-          console.log('[MLM API] Auto-refresh:', routes.length, 'rotas');
-        }).catch(function (err) {
-          console.error('[MLM API] Erro auto-refresh:', err);
-        });
-      }, 60000);
+  function injectData() {
+    var app = window.__MLM_SRJ3__;
+    if (!app || !app.STATE) {
+      console.warn('[MLM API] STATE ainda nao exposto, aguardando...');
+      return false;
     }
-    tryPatch();
+
+    fetchRealData().then(function (routes) {
+      app.STATE.routes = routes;
+      app.STATE.lastFetch = Date.now();
+
+      // Injeta metricas globais
+      if (window.__MLM_METRICS__) {
+        app.STATE.metrics = window.__MLM_METRICS__;
+      }
+
+      if (typeof app.render === 'function') {
+        app.render();
+        console.log('[MLM API] ✓ Painel atualizado com', routes.length, 'rotas reais');
+      } else {
+        console.warn('[MLM API] app.render nao existe - rotas injetadas mas pode precisar clicar em refresh');
+      }
+    }).catch(function (err) {
+      console.error('[MLM API] Falha total:', err);
+    });
+    return true;
   }
 
-  patchMonitor();
+  function start() {
+    var tries = 0;
+    var maxTries = 100;
+    function loop() {
+      tries++;
+      if (injectData()) {
+        // Sucesso - agenda auto-refresh
+        setInterval(injectData, 60000);
+        console.log('[MLM API] Auto-refresh a cada 60s ativo');
+        return;
+      }
+      if (tries < maxTries) {
+        setTimeout(loop, 100);
+      } else {
+        console.error('[MLM API] STATE nunca exposto. Verifique se "APP.STATE = STATE" foi adicionado ao monitor.js');
+      }
+    }
+    loop();
+  }
 
-  // Expoe pra debug
+  start();
+
   window.__MLM_API__ = {
     fetchRealData: fetchRealData,
     fetchAllRoutes: fetchAllRoutes,
     fetchMetrics: fetchMetrics,
-    detectCurrentSSC: detectCurrentSSC,
-    getCSRFToken: getCSRFToken,
-    patch: patchMonitor
+    injectData: injectData,
+    detectCurrentSSC: detectCurrentSSC
   };
 })();
