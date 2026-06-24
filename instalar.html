@@ -112,19 +112,18 @@
 <div class="wrap">
 
   <h1>📊 Monitor Last Mile</h1>
-  <span class="ver">v2.0 — funciona no Mercado Livre</span>
-  <p class="sub">Painel flutuante de monitoramento Last Mile.<br>
-  Compatível com a política de segurança (CSP) do ML.</p>
+  <span class="ver">v3.0 — dados reais do Mercado Livre</span>
+  <p class="sub">Painel flutuante conectado aos endpoints internos do ML.<br>
+  Funciona em qualquer página do <code>envios.adminml.com</code>.</p>
 
   <div class="card">
-    <h2>✓ O que ele faz</h2>
+    <h2>✓ Novidades v3.0</h2>
     <ul>
-      <li><b>6 abas:</b> Ofensoras, Insucessos, Motoristas, PNR, Agências, Devoluções</li>
-      <li><b>KPIs em tempo real</b> com cores semafóricas</li>
-      <li><b>Exports:</b> CSV, Excel e PDF print-ready</li>
-      <li><b>Importação de Agenda</b> CSV (placa, telefone, hub)</li>
-      <li><b>Modais</b> de Report Hora a Hora e Fechamento</li>
-      <li><b>Funciona em qualquer página do ML</b></li>
+      <li><b>Dados reais</b> via APIs internas do ML</li>
+      <li><b>Auto-detecção</b> do SSC pela URL</li>
+      <li><b>Paginação automática</b> — busca todas as rotas</li>
+      <li><b>Auto-refresh</b> a cada 60 segundos</li>
+      <li><b>Fallback gracioso</b> — se API falhar, mantém dados anteriores</li>
     </ul>
   </div>
 
@@ -141,8 +140,9 @@
     <h2>🚀 Como usar</h2>
     <ul>
       <li><b>1.</b> Arrasta o botão acima pra barra de favoritos</li>
-      <li><b>2.</b> Vai pra página do Last Mile do ML</li>
-      <li><b>3.</b> Clica no favorito → painel aparece flutuando</li>
+      <li><b>2.</b> Vai pra <code>envios.adminml.com/logistics/monitoring-distribution</code></li>
+      <li><b>3.</b> Espera a página do ML carregar completa (lista de rotas aparecendo)</li>
+      <li><b>4.</b> Clica no favorito → painel aparece com dados REAIS</li>
     </ul>
   </div>
 
@@ -150,41 +150,51 @@
     <h2>💡 Dicas</h2>
     <ul>
       <li><b>Não vê a barra de favoritos?</b> <code>Ctrl + Shift + B</code></li>
-      <li><b>Atualizar pra nova versão:</b> abre essa página de novo, arrasta o botão (substitui o anterior)</li>
+      <li><b>Console:</b> aperta <code>F12</code> e procura mensagens <code>[MLM API]</code></li>
+      <li><b>Atualizar:</b> reabre essa página, arrasta o botão novo (substitui o antigo)</li>
     </ul>
   </div>
 
 </div>
 
 <script>
-fetch('monitor.js?v=' + Date.now())
-  .then(function (r) {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+Promise.all([
+  fetch('monitor.js?v=' + Date.now()).then(function (r) {
+    if (!r.ok) throw new Error('monitor.js HTTP ' + r.status);
+    return r.text();
+  }),
+  fetch('monitor-api.js?v=' + Date.now()).then(function (r) {
+    if (!r.ok) throw new Error('monitor-api.js HTTP ' + r.status);
     return r.text();
   })
-  .then(function (codigo) {
-    function utf8ToBase64(str) {
-      return btoa(unescape(encodeURIComponent(str)));
-    }
-    var b64 = utf8ToBase64(codigo);
-    var bkm = "javascript:(function(){try{var s=document.createElement('script');" +
-              "s.textContent=decodeURIComponent(escape(atob('" + b64 + "')));" +
-              "document.documentElement.appendChild(s);s.remove();}" +
-              "catch(e){alert('Erro no Monitor: '+e.message);}})();";
+])
+.then(function (parts) {
+  var codigo = parts[0] + '\n\n;\n\n' + parts[1];
 
-    var btn = document.getElementById('bookmarklet');
-    btn.href = bkm;
-    btn.classList.remove('loading');
+  function utf8ToBase64(str) {
+    return btoa(unescape(encodeURIComponent(str)));
+  }
+  var b64 = utf8ToBase64(codigo);
+  var bkm = "javascript:(function(){try{var s=document.createElement('script');" +
+            "s.textContent=decodeURIComponent(escape(atob('" + b64 + "')));" +
+            "document.documentElement.appendChild(s);s.remove();}" +
+            "catch(e){alert('Erro no Monitor: '+e.message);}})();";
 
-    var sizeKB = (bkm.length / 1024).toFixed(1);
-    document.getElementById('status').innerHTML =
-      '<span class="ok">✓ Bookmarklet pronto: ' + sizeKB + ' KB · ' +
-      codigo.length.toLocaleString('pt-BR') + ' caracteres embutidos (base64)</span>';
-  })
-  .catch(function (err) {
-    document.getElementById('status').innerHTML =
-      '<span class="erro">⚠ Erro: ' + err.message + '</span>';
-  });
+  var btn = document.getElementById('bookmarklet');
+  btn.href = bkm;
+  btn.classList.remove('loading');
+
+  var sizeKB = (bkm.length / 1024).toFixed(1);
+  document.getElementById('status').innerHTML =
+    '<span class="ok">✓ Bookmarklet v3.0 pronto: ' + sizeKB + ' KB<br>' +
+    'monitor.js (' + parts[0].length.toLocaleString('pt-BR') + ' chars) + ' +
+    'monitor-api.js (' + parts[1].length.toLocaleString('pt-BR') + ' chars)<br>' +
+    '🎯 Conexão real com APIs do Mercado Livre habilitada</span>';
+})
+.catch(function (err) {
+  document.getElementById('status').innerHTML =
+    '<span class="erro">⚠ Erro: ' + err.message + '</span>';
+});
 </script>
 
 </body>
