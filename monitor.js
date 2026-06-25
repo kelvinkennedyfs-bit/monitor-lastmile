@@ -533,13 +533,16 @@
   }
 
   function renderKPIs() {
-    var r = STATE.routes || [];
+    var all = STATE.routes || [];
+    // Ignora rotas "A caminho do destino" (planned) em TUDO
+    var r = all.filter(function (rt) { return rt.status !== 'A caminho do destino'; });
     var s = getDSStats(r);
     var total = s.total, delivered = s.delivered, failed = s.failed, pnr = s.pnr;
-    var running = 0, finished = 0;
-    r.forEach(function (rt) {
-      if (rt.status === 'FINISHED' || rt.status === 'FINALIZADA' || rt.status === 'Encerradas') finished++;
-      else if (rt.status === 'IN_PROGRESS' || rt.status === 'RUNNING' || rt.status === 'Abertas') running++;
+    var running = 0, finished = 0, aCaminho = 0;
+    all.forEach(function (rt) {
+      if (rt.status === 'Encerradas') finished++;
+      else if (rt.status === 'Abertas') running++;
+      else if (rt.status === 'A caminho do destino') aCaminho++;
     });
     function set(id, txt, sub, color, pulse) {
       var v = document.getElementById('mlm_srj3_kpi_' + id + '_val');
@@ -559,7 +562,7 @@
     var pnrPct = total > 0 ? (pnr / total) * 100 : 0;
     set('pnr', fmt(pnr), pnrPct.toFixed(1) + '%',
         pnrPct <= 1 ? T.ok : pnrPct <= 3 ? T.warn : T.err, pnrPct > 5);
-    set('running', fmt(running), 'de ' + r.length, T.info);
+    set('running', fmt(running), 'de ' + r.length + (aCaminho > 0 ? ' · ' + aCaminho + ' a caminho' : ''), T.info);
     var finPct = r.length > 0 ? (finished / r.length) * 100 : 0;
     set('finished', fmt(finished), finPct.toFixed(0) + '%', finPct >= 80 ? T.ok : T.brand);
   }
@@ -896,7 +899,7 @@
       return box;
     }
 
-    wrap.appendChild(multiSel('Status',         'status',  ['Abertas', 'Encerradas']));
+    wrap.appendChild(multiSel('Status',         'status',  ['Abertas', 'Encerradas', 'A caminho do destino']));
     wrap.appendChild(multiSel('Tipo de rota',   'tipo',    ['Entrega', 'Mista', 'Coleta']));
     wrap.appendChild(multiSel('Modal',          'modal',   uniq(function (r) { return r.modal || r.vehicle; })));
     wrap.appendChild(multiSel('Transportadora', 'carrier', uniq(function (r) { return r.carrier; })));
@@ -1864,14 +1867,21 @@
   }
 
   function openReportModal() {
-    var routes = STATE.routes || [];
+    // Aplica filtros globais E descarta "A caminho do destino"
+    var routes = applyGlobalFilters(STATE.routes || [])
+      .filter(function (r) { return r.status !== 'A caminho do destino'; });
     var stats = getDSStats(routes);
     var finished = 0, running = 0, notStarted = 0;
     routes.forEach(function (r) {
-      if (r.status === 'FINISHED' || r.status === 'FINALIZADA' || r.status === 'Encerradas') finished++;
-      else if (r.status === 'IN_PROGRESS' || r.status === 'RUNNING' || r.status === 'Abertas') running++;
+      if (r.status === 'Encerradas') finished++;
+      else if (r.status === 'Abertas') running++;
       else notStarted++;
     });
+
+    // Detecta se há filtros ativos
+    var g = STATE.globalFilters;
+    var hasFilters = g.status.size + g.tipo.size + g.modal.size + g.carrier.size +
+                     g.driver.size + g.ciclo.size + g.origem.size > 0 || g.placa;
     var pendentes = Math.max(0, stats.total - stats.delivered - stats.failed - stats.foraDS);
 
     // Top 3 ofensoras
@@ -1902,6 +1912,7 @@
 
     var textoWA =
       '*🚚 ' + STATE.ssc + ' • REPORT ' + horaFmt + ' • ' + dataFmt + '*\n' +
+      (hasFilters ? '_⚙️ Filtros aplicados — ' + routes.length + ' rotas_\n' : '') +
       '━━━━━━━━━━━━━━━━━━━━\n\n' +
       '📦 *Pacotes:* ' + fmt(stats.total) + '\n' +
       '✅ *Entregues:* ' + fmt(stats.delivered) + ' (' + stats.dsPct.toFixed(1) + '%)\n' +
@@ -1947,8 +1958,28 @@
       'border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;' +
       'align-items:center;gap:6px';
     btnCopiar.onclick = function () {
-      copyText(ta.value).then(function () { toast('Copiado!', 'ok'); })
-        .catch(function () { toast('Falha ao copiar', 'err'); });
+      // Garante que pega o valor atual do textarea (caso usuário tenha editado)
+      var conteudo = ta.value;
+      if (!conteudo) { toast('Nada para copiar', 'warn'); return; }
+      // Fallback robusto: tenta clipboard API, depois execCommand
+      try {
+        ta.focus();
+        ta.select();
+        ta.setSelectionRange(0, 99999);
+      } catch (e) {}
+      copyText(conteudo).then(function () {
+        toast('Mensagem copiada!', 'ok');
+      }).catch(function (err) {
+        // Fallback final: execCommand
+        try {
+          ta.focus(); ta.select();
+          var ok = document.execCommand('copy');
+          if (ok) toast('Mensagem copiada!', 'ok');
+          else toast('Selecione e use Ctrl+C', 'warn');
+        } catch (e2) {
+          toast('Falha ao copiar: ' + (err && err.message || 'erro'), 'err');
+        }
+      });
     };
     var btnFechar = mk('button', '', '<span>Fechar</span>');
     btnFechar.className = 'mlm_btn';
@@ -1958,8 +1989,13 @@
   }
 
   function openFechamentoModal() {
-    var routes = STATE.routes || [];
+    // Aplica filtros globais E descarta "A caminho do destino"
+    var routes = applyGlobalFilters(STATE.routes || [])
+      .filter(function (r) { return r.status !== 'A caminho do destino'; });
     var stats = getDSStats(routes);
+    var g = STATE.globalFilters;
+    var hasFilters = g.status.size + g.tipo.size + g.modal.size + g.carrier.size +
+                     g.driver.size + g.ciclo.size + g.origem.size > 0 || g.placa;
     var total = stats.total, delivered = stats.delivered;
     var failed = stats.failed, pnr = stats.pnr, foraDS = stats.foraDS;
     var dsPct = stats.dsPct.toFixed(2);
@@ -2066,6 +2102,7 @@
       t += '╚══════════════════════════════════════════╝\n\n';
       t += '📅 Gerado em: ' + dataFmt + ' às ' + horaFmt + '\n';
       if (inpOperador.value) t += '👤 Operador: ' + inpOperador.value + '\n';
+      if (hasFilters) t += '⚙️ Filtros aplicados — ' + routes.length + ' rotas no escopo\n';
       t += '\n';
 
       t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
@@ -2647,8 +2684,13 @@ function updateCountdown() {
   function parseStatus(substatus, finalDate) {
     if (!substatus) return 'Abertas';
     var s = String(substatus).toLowerCase();
-    if (s === 'finished' || s === 'completed' || (finalDate && finalDate > 0)) return 'Encerradas';
-    if (s === 'not_started' || s === 'pending') return 'Abertas';
+    // Encerradas (rota finalizada)
+    if (s === 'close' || s === 'closed' || s === 'finished' || s === 'completed') return 'Encerradas';
+    // A caminho do destino (NÃO contabiliza em pacotes/rotas)
+    if (s === 'planned') return 'A caminho do destino';
+    // Em andamento (abertas)
+    if (s === 'active' || s === 'return_to_station' || s === 'started' || s === 'in_progress') return 'Abertas';
+    // Default = abertas
     return 'Abertas';
   }
 
