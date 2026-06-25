@@ -1366,93 +1366,168 @@
   // RENDER INSUCESSOS
   // ==========================================================================
   function renderInsucessos() {
-    var routes = STATE.routes || [];
-    var pkgs = [];
-    routes.forEach(function (r) {
-      (r.failures || []).forEach(function (pk) {
-        pkgs.push({
-          packageId: pk.packageId, motivo: pk.reason || 'Sem motivo',
-          rota: r.routeId, motorista: r.driver, carrier: r.carrier, hora: pk.time || ''
-        });
-      });
-    });
-    var f = STATE.filters.INSUCESSOS;
-    var motivos = [], carriers = [];
-    pkgs.forEach(function (p) {
-      if (motivos.indexOf(p.motivo) < 0) motivos.push(p.motivo);
-      if (p.carrier && carriers.indexOf(p.carrier) < 0) carriers.push(p.carrier);
-    });
-    motivos.sort(); carriers.sort();
-    var filtered = pkgs.filter(function (p) {
-      if (f.motivo.size > 0 && !f.motivo.has(p.motivo)) return false;
-      if (f.carrier.size > 0 && !f.carrier.has(p.carrier)) return false;
-      return true;
-    });
-    var byMotivo = {};
-    filtered.forEach(function (p) {
-      if (!byMotivo[p.motivo]) byMotivo[p.motivo] = [];
-      byMotivo[p.motivo].push(p);
-    });
+    var allRoutes = applyGlobalFilters(STATE.routes || [])
+      .filter(function (r) { return r.status !== 'A caminho do destino'; });
+    var routes = allRoutes.filter(function (r) { return (r.failed || 0) > 0; });
+    routes.sort(function (a, b) { return (b.failed || 0) - (a.failed || 0); });
+
+    var totalInsucessos = 0;
+    routes.forEach(function (r) { totalInsucessos += r.failed || 0; });
 
     content.appendChild(mk('div',
       'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:10px',
       'Insucessos <span style="color:' + T.muted + ';font-size:11px">(' +
-      filtered.length + ' de ' + pkgs.length + ')</span>'));
+      fmt(totalInsucessos) + ' pacotes em ' + routes.length + ' rotas)</span>'));
 
-    if (motivos.length > 0) content.appendChild(chipFilter({
-      label: 'Motivo', values: motivos, selectedSet: f.motivo,
-      onChange: function () { renderActiveTab(); }
-    }));
-    if (carriers.length > 0) content.appendChild(chipFilter({
-      label: 'Carrier', values: carriers, selectedSet: f.carrier,
-      onChange: function () { renderActiveTab(); }
-    }));
+    if (routes.length === 0) {
+      content.appendChild(mk('div',
+        'text-align:center;padding:40px;color:' + T.muted + ';font-style:italic',
+        'Nenhum insucesso registrado com os filtros aplicados.'));
+      setFooterCount(0, 0);
+      return;
+    }
 
+    // === TOP 10 ROTAS COM MAIS INSUCESSOS ===
+    var top10 = routes.slice(0, 10);
+    var topCard = mk('div',
+      'background:' + T.surface + ';border:1px solid ' + T.border +
+      ';border-left:3px solid ' + T.err + ';border-radius:10px;padding:12px 14px;margin-bottom:14px');
+    topCard.appendChild(mk('div',
+      'font-size:12px;font-weight:600;color:' + T.textHi + ';margin-bottom:8px',
+      '🔥 TOP 10 Rotas com Mais Insucessos'));
+
+    var tbl = mk('table',
+      'width:100%;border-collapse:separate;border-spacing:0;font-size:12px');
+    var thead = mk('thead'); var trh = mk('tr');
+    ['#', 'Rota', 'Motorista', 'Carrier', 'Insucessos', '% do Total'].forEach(function (h) {
+      trh.appendChild(mk('th',
+        'padding:8px 10px;text-align:left;font-size:10px;color:' + T.muted +
+        ';font-weight:600;text-transform:uppercase;border-bottom:1px solid ' + T.border, h));
+    });
+    thead.appendChild(trh); tbl.appendChild(thead);
+    var tbody = mk('tbody');
+    top10.forEach(function (r, i) {
+      var tr = mk('tr');
+      var color = i === 0 ? T.err : i < 3 ? T.warn : T.mutedHi;
+      tr.appendChild(mk('td',
+        'padding:8px 10px;color:' + color + ';font-family:' + T.fMono +
+        ';font-weight:700;border-bottom:1px solid ' + T.border, '#' + (i + 1)));
+      tr.appendChild(mk('td',
+        'padding:8px 10px;color:' + T.textHi + ';font-family:' + T.fMono +
+        ';border-bottom:1px solid ' + T.border, escapeHTML(r.routeId)));
+      tr.appendChild(mk('td',
+        'padding:8px 10px;color:' + T.mutedHi + ';border-bottom:1px solid ' + T.border,
+        escapeHTML(r.driver || '—')));
+      tr.appendChild(mk('td',
+        'padding:8px 10px;color:' + T.muted + ';font-family:' + T.fMono +
+        ';font-size:11px;border-bottom:1px solid ' + T.border, escapeHTML(r.carrier || '—')));
+      tr.appendChild(mk('td',
+        'padding:8px 10px;color:' + T.err + ';font-family:' + T.fMono +
+        ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(r.failed)));
+      tr.appendChild(mk('td',
+        'padding:8px 10px;color:' + T.mutedHi + ';font-family:' + T.fMono +
+        ';border-bottom:1px solid ' + T.border,
+        ((r.failed / totalInsucessos) * 100).toFixed(1) + '%'));
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    topCard.appendChild(tbl);
+    content.appendChild(topCard);
+
+    // === AGRUPAMENTO POR CARRIER ===
+    var byCarrier = {};
+    routes.forEach(function (r) {
+      var c = r.carrier || '—';
+      if (!byCarrier[c]) byCarrier[c] = { carrier: c, total: 0, rotas: 0 };
+      byCarrier[c].total += r.failed || 0;
+      byCarrier[c].rotas++;
+    });
+    var carriersArr = Object.keys(byCarrier).map(function (k) { return byCarrier[k]; })
+      .sort(function (a, b) { return b.total - a.total; });
+
+    var carrierCard = mk('div',
+      'background:' + T.surface + ';border:1px solid ' + T.border +
+      ';border-left:3px solid ' + T.warn + ';border-radius:10px;padding:12px 14px;margin-bottom:14px');
+    carrierCard.appendChild(mk('div',
+      'font-size:12px;font-weight:600;color:' + T.textHi + ';margin-bottom:8px',
+      '🏢 Insucessos por Transportadora'));
+
+    var tbl2 = mk('table', 'width:100%;border-collapse:separate;border-spacing:0;font-size:12px');
+    var thead2 = mk('thead'); var trh2 = mk('tr');
+    ['Carrier', 'Rotas afetadas', 'Insucessos', '% do Total'].forEach(function (h) {
+      trh2.appendChild(mk('th',
+        'padding:8px 10px;text-align:left;font-size:10px;color:' + T.muted +
+        ';font-weight:600;text-transform:uppercase;border-bottom:1px solid ' + T.border, h));
+    });
+    thead2.appendChild(trh2); tbl2.appendChild(thead2);
+    var tbody2 = mk('tbody');
+    carriersArr.forEach(function (c) {
+      var tr = mk('tr');
+      tr.appendChild(mk('td',
+        'padding:8px 10px;color:' + T.textHi + ';font-weight:600;border-bottom:1px solid ' + T.border,
+        escapeHTML(c.carrier)));
+      tr.appendChild(mk('td',
+        'padding:8px 10px;color:' + T.mutedHi + ';font-family:' + T.fMono +
+        ';border-bottom:1px solid ' + T.border, fmt(c.rotas)));
+      tr.appendChild(mk('td',
+        'padding:8px 10px;color:' + T.err + ';font-family:' + T.fMono +
+        ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(c.total)));
+      tr.appendChild(mk('td',
+        'padding:8px 10px;color:' + T.mutedHi + ';font-family:' + T.fMono +
+        ';border-bottom:1px solid ' + T.border,
+        ((c.total / totalInsucessos) * 100).toFixed(1) + '%'));
+      tbody2.appendChild(tr);
+    });
+    tbl2.appendChild(tbody2);
+    carrierCard.appendChild(tbl2);
+    content.appendChild(carrierCard);
+
+    // === EXPORT ===
     content.appendChild(exportBar('INSUCESSOS',
-      function () { return filtered; },
+      function () {
+        return routes.map(function (r) {
+          return {
+            rota: r.routeId, motorista: r.driver, carrier: r.carrier,
+            origem: r.origem, ciclo: r.ciclo, insucessos: r.failed,
+            total: r.totalPkg, pendentes: r.pendentes
+          };
+        });
+      },
       [
-        { key: 'packageId', label: 'Pacote' }, { key: 'motivo', label: 'Motivo' },
         { key: 'rota', label: 'Rota' }, { key: 'motorista', label: 'Motorista' },
-        { key: 'carrier', label: 'Carrier' }, { key: 'hora', label: 'Hora' }
+        { key: 'carrier', label: 'Carrier' }, { key: 'origem', label: 'Origem' },
+        { key: 'ciclo', label: 'Ciclo' }, { key: 'insucessos', label: 'Insucessos' },
+        { key: 'total', label: 'Total' }, { key: 'pendentes', label: 'Pendentes' }
       ], 'Insucessos — ' + STATE.ssc + ' — ' + STATE.date));
 
-    var grid = mk('div', 'display:flex;flex-direction:column;gap:10px');
-    var motivosOrdered = Object.keys(byMotivo).sort(function (a, b) {
-      return byMotivo[b].length - byMotivo[a].length;
-    });
-    motivosOrdered.forEach(function (motivo) {
-      var items = byMotivo[motivo];
+    // === LISTA COMPLETA DE ROTAS COM INSUCESSO ===
+    content.appendChild(mk('div',
+      'font-size:12px;font-weight:600;color:' + T.textHi + ';margin:14px 0 8px 0',
+      '📋 Todas as rotas com insucesso (' + routes.length + ')'));
+
+    var grid = mk('div', 'display:flex;flex-direction:column;gap:8px');
+    routes.forEach(function (r) {
       var card = mk('div',
-        'background:' + T.surface + ';border:1px solid ' + T.border + ';border-radius:10px;' +
-        'padding:12px 14px;border-left:3px solid ' + T.err);
-      var head = mk('div', 'display:flex;align-items:center;gap:10px;flex-wrap:wrap');
-      head.appendChild(mk('div',
-        'font-size:13px;font-weight:600;color:' + T.textHi, escapeHTML(motivo)));
-      head.appendChild(mk('span',
+        'background:' + T.surface + ';border:1px solid ' + T.border + ';border-radius:8px;' +
+        'padding:10px 12px;border-left:3px solid ' +
+        ((r.failed || 0) > 5 ? T.err : (r.failed || 0) > 2 ? T.warn : T.info) +
+        ';display:flex;align-items:center;gap:12px;flex-wrap:wrap');
+      card.appendChild(mk('div',
+        'font-family:' + T.fMono + ';font-size:12px;font-weight:600;color:' + T.textHi,
+        escapeHTML(r.routeId)));
+      card.appendChild(mk('div', 'font-size:11px;color:' + T.mutedHi,
+        escapeHTML(r.driver || '—')));
+      card.appendChild(mk('div',
+        'font-size:10px;color:' + T.muted + ';font-family:' + T.fMono,
+        escapeHTML(r.carrier || '—') + (r.origem ? ' · ' + escapeHTML(r.origem) : '')));
+      card.appendChild(mk('span',
         'background:rgba(239,68,68,.15);color:' + T.err + ';font-size:11px;font-weight:700;' +
-        'padding:2px 10px;border-radius:10px;font-family:' + T.fMono, fmt(items.length)));
-      head.appendChild(mk('span',
-        'color:' + T.muted + ';font-size:11px;margin-left:auto',
-        pct(items.length, filtered.length) + ' do total'));
-      card.appendChild(head);
-      card.appendChild(toggleBlock('ins_' + motivo, 'Ver ' + items.length + ' pacotes',
-        function () {
-          var inner = mk('div');
-          items.forEach(function (p) {
-            var line = mk('div', 'padding:4px 0;border-bottom:1px dashed ' + T.border);
-            line.innerHTML =
-              '<span style="color:' + T.brand2 + '">' + escapeHTML(p.packageId) + '</span> · ' +
-              '<span style="color:' + T.mutedHi + '">Rota ' + escapeHTML(p.rota) + '</span> · ' +
-              '<span style="color:' + T.muted + '">' + escapeHTML(p.motorista || '—') + '</span>' +
-              (p.hora ? ' · <span style="color:' + T.muted + '">' + escapeHTML(p.hora) + '</span>' : '');
-            inner.appendChild(line);
-          });
-          return inner;
-        }));
+        'padding:2px 10px;border-radius:10px;font-family:' + T.fMono + ';margin-left:auto',
+        fmt(r.failed) + ' insuc.'));
       grid.appendChild(card);
     });
     content.appendChild(grid);
-    setFooterCount(filtered.length, pkgs.length);
+    setFooterCount(routes.length, allRoutes.length);
   }
 
   // ==========================================================================
@@ -2681,22 +2756,40 @@ function updateCountdown() {
   }
 
   // Normaliza status do ML para o padrão do painel
-  function parseStatus(substatus, finalDate) {
-    if (!substatus) return 'Abertas';
-    var s = String(substatus).toLowerCase();
-    // Encerradas (rota finalizada)
-    if (s === 'close' || s === 'closed' || s === 'finished' || s === 'completed') return 'Encerradas';
-    // A caminho do destino (NÃO contabiliza em pacotes/rotas)
-    if (s === 'planned') return 'A caminho do destino';
-    // Em andamento (abertas)
-    if (s === 'active' || s === 'return_to_station' || s === 'started' || s === 'in_progress') return 'Abertas';
-    // Default = abertas
+  function parseStatus(substatus, finalDate, status) {
+    // Tenta vários campos: status, substatus
+    var raw = substatus || status || '';
+    var s = String(raw).toLowerCase().trim();
+
+    // ENCERRADAS = rotas finalizadas (CLOSED, CLOSE, FINISHED)
+    if (s === 'close' || s === 'closed' || s === 'finished' ||
+        s === 'completed' || s === 'finalized') return 'Encerradas';
+
+    // A CAMINHO DO DESTINO (PLANNED - ainda não saiu pra rota)
+    if (s === 'planned' || s === 'plan' || s === 'to_be_started') return 'A caminho do destino';
+
+    // ABERTAS = em andamento (ACTIVE, RETURN_TO_STATION, STARTED, IN_PROGRESS)
+    if (s === 'active' || s === 'return_to_station' || s === 'started' ||
+        s === 'in_progress' || s === 'running' || s === 'on_route' ||
+        s === 'returning') return 'Abertas';
+
+    // Fallback: se tem finalDate > 0 = Encerrada, senão = Aberta
+    if (finalDate && finalDate > 0) return 'Encerradas';
     return 'Abertas';
   }
-
   // Converte uma rota do JSON do ML pro formato interno do painel
   function mapRoute(r) {
     var c = r.counters || {};
+    // DEBUG: loga primeiras 3 rotas pra confirmar campos
+    if (window.__MLM_DEBUG_COUNT === undefined) window.__MLM_DEBUG_COUNT = 0;
+    if (window.__MLM_DEBUG_COUNT < 3) {
+      console.log('[MLM debug rota cruda]', {
+        id: r.id, status: r.status, substatus: r.substatus,
+        facilityId: r.facilityId, finalDate: r.finalDate,
+        counters: r.counters
+      });
+      window.__MLM_DEBUG_COUNT++;
+    }
     return {
       routeId: String(r.id || ''),
       driver:  (r.driver && r.driver.driverName) || '—',
@@ -2709,14 +2802,14 @@ function updateCountdown() {
       ciclo: parseCiclo(r.cluster),
       tipo: r.deliveryType || r.type || '',
       modal: r.deliveryType || '',
-      origem: r.facilityId || '',
-      tipoOrigem: r.facilityType || '',
+      origem: r.facilityId || r.facility_id || r.origin || r.originFacility || '',
+      tipoOrigem: r.facilityType || r.facility_type || '',
       destinoId: r.destinationFacility && r.destinationFacility.destinationFacilityId,
       destinoTipo: r.destinationFacility && r.destinationFacility.destinationFacilityType,
       agencia: r.facilityId || '',
       placa: r.plate || r.vehicle || '',
-      status: parseStatus(r.substatus, r.finalDate),
-      substatus: r.substatus,
+      status: parseStatus(r.substatus, r.finalDate, r.status),
+      substatus: r.substatus || r.status || '',
       totalPkg:  c.total        || 0,
       delivered: c.delivered    || 0,
       failed:    c.notDelivered || 0,
