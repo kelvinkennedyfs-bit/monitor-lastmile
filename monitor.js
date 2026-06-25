@@ -2625,119 +2625,175 @@ function updateCountdown() {
   setRefreshIcon();
 
   // ==========================================================================
-  // DO FETCH (MOCK)
+  // DO FETCH — API REAL DO ML
   // ==========================================================================
-  var USE_MOCK = true;
+  var USE_MOCK = false;  // <- agora usa API real!
+  var API_URL = 'https://envios.adminml.com/logistics/api/monitoring/get-routes-list';
 
+  // Extrai o ciclo do campo cluster (T4_CHP -> CHP, T27_PM1 -> PM1, "2873" -> SD)
+  function parseCiclo(cluster) {
+    if (!cluster) return '';
+    var s = String(cluster).toUpperCase();
+    if (s.indexOf('CHP') >= 0) return 'CHP';
+    if (s.indexOf('AM1') >= 0) return 'AM1';
+    if (s.indexOf('PM1') >= 0) return 'PM1';
+    if (s.indexOf('SD')  >= 0) return 'SD';
+    // Se só veio número, assume SD
+    if (/^\d+$/.test(s)) return 'SD';
+    return s;
+  }
+
+  // Normaliza status do ML para o padrão do painel
+  function parseStatus(substatus, finalDate) {
+    if (!substatus) return 'Abertas';
+    var s = String(substatus).toLowerCase();
+    if (s === 'finished' || s === 'completed' || (finalDate && finalDate > 0)) return 'Encerradas';
+    if (s === 'not_started' || s === 'pending') return 'Abertas';
+    return 'Abertas';
+  }
+
+  // Converte uma rota do JSON do ML pro formato interno do painel
+  function mapRoute(r) {
+    var c = r.counters || {};
+    return {
+      routeId: String(r.id || ''),
+      driver:  (r.driver && r.driver.driverName) || '—',
+      driverId: r.driver && r.driver.driverId,
+      driverClaims: r.driver && r.driver.driverClaims,
+      driverLoyalty: r.driver && r.driver.loyalty && r.driver.loyalty.name,
+      carrier: r.carrier || '—',
+      carrierId: r.carrierId,
+      cluster: r.cluster || '',
+      ciclo: parseCiclo(r.cluster),
+      tipo: r.deliveryType || r.type || '',
+      modal: r.deliveryType || '',
+      origem: r.facilityId || '',
+      tipoOrigem: r.facilityType || '',
+      destinoId: r.destinationFacility && r.destinationFacility.destinationFacilityId,
+      destinoTipo: r.destinationFacility && r.destinationFacility.destinationFacilityType,
+      agencia: r.facilityId || '',
+      placa: r.plate || r.vehicle || '',
+      status: parseStatus(r.substatus, r.finalDate),
+      substatus: r.substatus,
+      totalPkg:  c.total        || 0,
+      delivered: c.delivered    || 0,
+      failed:    c.notDelivered || 0,
+      pnr:       0,  // PNR não vem nesse endpoint, fica 0 por enquanto
+      pendentes: c.pending      || 0,
+      comerciais: c.business    || 0,
+      residenciais: c.residential || 0,
+      bags: c.totalBags || 0,
+      initDate: r.initDate,
+      finalDate: r.finalDate,
+      // Estes virão de outro endpoint (detalhe da rota) se quisermos depois:
+      failures: [],
+      pnrList: [],
+      returns: [],
+      failedIds: [],
+      pnrIds: []
+    };
+  }
+
+  // Busca uma página da API
+  function fetchPage(page) {
+    return fetch(API_URL, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        serviceCenterId: STATE.ssc,
+        siteId: 'MLB',
+        page: page,
+        pageSize: 50,
+        order_by: 'performance'
+      })
+    }).then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    });
+  }
+
+  // Busca TODAS as páginas (1, 2, 3, ...) até hasNext=false
+  function fetchAllPages() {
+    var allRoutes = [];
+    function loop(page) {
+      return fetchPage(page).then(function (data) {
+        var routes = (data && data.routes) || [];
+        allRoutes = allRoutes.concat(routes);
+        var pag = data && data.pagination;
+        if (pag && pag.hasNext && page < 20) {  // limite de segurança: 20 páginas
+          return loop(page + 1);
+        }
+        return allRoutes;
+      });
+    }
+    return loop(1);
+  }
+
+  // Mock simplificado de fallback (caso queira testar sem API)
   function getMockData() {
-    var carriers = ['LogExpress', 'RotaSul', 'TransRJ', 'CargoFast'];
-    var clusters = ['Zona Sul', 'Zona Norte', 'Zona Oeste', 'Centro', 'Baixada'];
-    var motivos = ['Endereço não localizado', 'Cliente ausente', 'Recusou', 'Avaria',
-                   'Sem acesso', 'Não está na agência'];
+    var carriers = ['LogExpress', 'RotaSul', 'DECARGO', 'Envios Extra'];
     var nomes = ['João Silva', 'Maria Santos', 'Carlos Lima', 'Ana Costa',
-                 'Pedro Souza', 'Lucas Pereira', 'Rafael Alves', 'Bruno Dias',
-                 'Felipe Rocha', 'Diego Martins', 'Thiago Barbosa', 'Marcelo Nunes'];
-    var statuses = ['FINISHED', 'IN_PROGRESS', 'IN_PROGRESS', 'IN_PROGRESS', 'FINISHED'];
-    // Mock simples — dados reais virão do monitoramento
+                 'Pedro Souza', 'Lucas Pereira', 'Rafael Alves', 'Bruno Dias'];
     var ciclos = ['CHP', 'AM1', 'PM1', 'SD'];
-    var tipos = ['Entrega', 'Mista', 'Coleta'];
     var routes = [];
-    for (var i = 1; i <= 22; i++) {
+    for (var i = 1; i <= 10; i++) {
       var total = 30 + Math.floor(Math.random() * 80);
-      var failedN = Math.floor(Math.random() * 8);
-      var pnrN = Math.floor(Math.random() * 5);
-      var returnsN = Math.floor(Math.random() * 3);
-      var delivered = Math.max(0, total - failedN - pnrN - returnsN);
-      var carrier = carriers[i % carriers.length];
-      var cluster = clusters[i % clusters.length];
-      var driver = nomes[i % nomes.length];
-      var failures = [];
-      for (var f = 0; f < failedN; f++) {
-        failures.push({
-          packageId: 'BR' + (1000000 + i * 100 + f),
-          reason: motivos[Math.floor(Math.random() * motivos.length)],
-          time: pad(8 + Math.floor(Math.random() * 10)) + ':' + pad(Math.floor(Math.random() * 60))
-        });
-      }
-      var pnrList = [];
-      for (var p = 0; p < pnrN; p++) {
-        pnrList.push({
-          packageId: 'BR' + (2000000 + i * 100 + p),
-          reason: 'Não retirado na agência',
-          time: pad(8 + Math.floor(Math.random() * 10)) + ':' + pad(Math.floor(Math.random() * 60))
-        });
-      }
-      var returns = [];
-      for (var dd = 0; dd < returnsN; dd++) {
-        returns.push({
-          packageId: 'BR' + (3000000 + i * 100 + dd),
-          reason: 'Devolução solicitada',
-          destination: 'Hub ' + STATE.ssc,
-          time: pad(14 + Math.floor(Math.random() * 5)) + ':' + pad(Math.floor(Math.random() * 60))
-        });
-      }
-      var statusRaw = statuses[i % statuses.length];
+      var failedN = Math.floor(Math.random() * 5);
+      var delivered = Math.max(0, total - failedN - Math.floor(Math.random() * 10));
       routes.push({
         routeId: 'R-' + STATE.ssc + '-' + pad(i, 3),
-        driver: driver, carrier: carrier, cluster: cluster,
-        agencia: 'AG-' + carrier.slice(0, 3).toUpperCase(),
+        driver: nomes[i % nomes.length],
+        carrier: carriers[i % carriers.length],
+        cluster: 'T' + i + '_' + ciclos[i % ciclos.length],
         ciclo: ciclos[i % ciclos.length],
-        tipo: tipos[i % tipos.length],
-        status: statusRaw === 'FINISHED' ? 'Encerradas' : 'Abertas',  
-        totalPkg: total, delivered: delivered,
-        failed: failedN, pnr: pnrN,
-        failures: failures, pnrList: pnrList, returns: returns,
-        failedIds: failures.map(function (x) { return x.packageId; }),
-        pnrIds: pnrList.map(function (x) { return x.packageId; }),
-        comerciais: Math.floor(Math.random() * 15)
+        tipo: 'driver',
+        origem: STATE.ssc,
+        status: i % 2 === 0 ? 'Encerradas' : 'Abertas',
+        totalPkg: total, delivered: delivered, failed: failedN, pnr: 0,
+        pendentes: total - delivered - failedN,
+        failures: [], pnrList: [], returns: [], failedIds: [], pnrIds: []
       });
     }
     return routes;
   }
 
   function doFetch(silent) {
-    // === TRAVA DE REENTRÂNCIA: bloqueia chamadas concorrentes ===
     if (STATE.fetching) {
       if (!silent) toast('Já existe uma atualização em andamento...', 'warn');
       return Promise.resolve();
     }
     STATE.fetching = true;
     STATE.loading = true;
-
-    // === PAUSA o auto-refresh enquanto este fetch roda ===
     STATE.refreshLockedByFetch = true;
 
-    // === Só limpa a tela no PRIMEIRO carregamento (quando não há dados ainda) ===
     var isFirstLoad = !STATE.routes || STATE.routes.length === 0;
     if (!silent && isFirstLoad) {
       content.innerHTML = '';
       renderSkeleton();
     }
     try { refreshIcon.firstChild.classList.add('mlm_spin'); } catch (e) {}
-    // Indicador visual de "atualizando" sem destruir o painel
     refreshLabel.textContent = 'Atualizando...';
     refreshLabel.style.color = T.brand2;
 
     var startedAt = Date.now();
     var promise;
+
     if (USE_MOCK) {
       promise = new Promise(function (resolve) {
         setTimeout(function () { resolve(getMockData()); }, silent ? 200 : 600);
       });
     } else {
-      var ENDPOINT = '/api/REPLACE_ME?ssc=' + encodeURIComponent(STATE.ssc) +
-                     '&date=' + encodeURIComponent(STATE.date);
-      promise = fetch(ENDPOINT, {
-        method: 'GET', credentials: 'include',
-        headers: { 'Accept': 'application/json' }
-      }).then(function (resp) {
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        return resp.json();
+      // API REAL: busca todas as páginas e mapeia
+      promise = fetchAllPages().then(function (rawRoutes) {
+        return rawRoutes.map(mapRoute);
       });
     }
 
     return promise.then(function (routes) {
-      // === GUARDA: só troca o snapshot se veio array válido ===
       if (Array.isArray(routes)) {
         STATE.routes = routes;
         STATE.lastFetch = Date.now();
@@ -2751,7 +2807,7 @@ function updateCountdown() {
       renderKPIs();
       renderActiveTab();
       updateLastUpdate();
-      scheduleNextRefresh(); // reagenda só DEPOIS que terminou
+      scheduleNextRefresh();
       if (!silent) {
         toast('Dados carregados (' + (STATE.routes.length) + ' rotas · ' +
               (Date.now() - startedAt) + 'ms)', 'ok');
@@ -2761,17 +2817,17 @@ function updateCountdown() {
       STATE.fetching = false;
       STATE.refreshLockedByFetch = false;
       try { refreshIcon.firstChild.classList.remove('mlm_spin'); } catch (e) {}
-      // NÃO limpa a tela — mantém o último snapshot bom
       toast('Erro ao buscar dados: ' + err.message + ' (mantendo últimos dados)', 'err');
       scheduleNextRefresh();
-      // Só mostra tela de erro se realmente não há nada pra mostrar
       if (!STATE.routes || STATE.routes.length === 0) {
         content.innerHTML = '';
         content.appendChild(mk('div',
           'text-align:center;padding:40px 20px;color:' + T.err + ';font-size:13px',
           '⚠ Erro ao carregar dados.<br>' +
           '<span style="color:' + T.muted + ';font-size:11px;font-family:' + T.fMono + '">' +
-          escapeHTML(String(err.message || err)) + '</span>'));
+          escapeHTML(String(err.message || err)) + '</span><br><br>' +
+          '<span style="color:' + T.muted + ';font-size:10px">' +
+          'Verifique se você está logado no ML e rodando o bookmarklet a partir de envios.adminml.com</span>'));
       }
     });
   }
