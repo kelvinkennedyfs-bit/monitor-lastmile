@@ -203,7 +203,7 @@
     ssc: 'SRJ3',
     date: new Date().toISOString().slice(0, 10),
     routes: [], lastFetch: null, loading: false,
-    tab: 'OFENSORAS', scale: 1, minimized: false, maximized: false, prevStyle: null,
+    tab: 'ROTAS', scale: 1, minimized: false, maximized: false, prevStyle: null,
     filters: {
       OFENSORAS:   { carrier: new Set(), cluster: new Set(), status: '' },
       INSUCESSOS:  { motivo: new Set(), carrier: new Set() },
@@ -213,7 +213,19 @@
       DEVOLUCOES:  { sort: 'all' }
     },
     expanded: {},
-    refreshMs: 600000, refreshPaused: false, nextRefreshAt: 0
+    refreshMs: 600000, refreshPaused: false, nextRefreshAt: 0,
+    fetching: false, refreshLockedByFetch: false,
+    globalFilters: {
+      status: new Set(),
+      tipo: new Set(),
+      modal: new Set(),
+      carrier: new Set(),
+      driver: new Set(),
+      ciclo: new Set(),
+      origem: new Set(),
+      placa: '',
+      rank: 'none'
+    }
   };
   APP.STATE = STATE; APP.render = function(){ if(typeof renderKPIs==='function')renderKPIs(); if(typeof renderActiveTab==='function')renderActiveTab(); };
 
@@ -485,15 +497,49 @@
     kpiWrap.appendChild(card);
   });
   panel.appendChild(kpiWrap);
+// Motivos de insucesso que NÃO contam contra o DS (não foram tentativas reais)
+  var MOTIVOS_FORA_DO_DS = [
+    'nao esta na agencia', 'não está na agência', 'nao estao na agencia',
+    'não estão na agência', 'pacote nao esta na agencia', 'pacote não está na agência'
+  ];
+
+  function isInsucessoForaDoDS(motivo) {
+    if (!motivo) return false;
+    var norm = String(motivo).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    return MOTIVOS_FORA_DO_DS.indexOf(norm) >= 0;
+  }
+
+  // Recalcula totais considerando que "Não está na agência" não conta no DS
+  function getDSStats(routes) {
+    var total = 0, delivered = 0, failed = 0, pnr = 0, foraDS = 0;
+    routes.forEach(function (r) {
+      total     += r.totalPkg  || 0;
+      delivered += r.delivered || 0;
+      pnr       += r.pnr       || 0;
+      (r.failures || []).forEach(function (f) {
+        if (isInsucessoForaDoDS(f.reason)) foraDS++;
+        else failed++;
+      });
+      // fallback: se não tem r.failures detalhado, usa r.failed
+      if (!r.failures || r.failures.length === 0) failed += r.failed || 0;
+    });
+    // Base do DS: descontando os que estão "fora do DS"
+    var baseDS = total - foraDS;
+    var dsPct = baseDS > 0 ? (delivered / baseDS) * 100 : 0;
+    return {
+      total: total, delivered: delivered, failed: failed,
+      pnr: pnr, foraDS: foraDS, baseDS: baseDS, dsPct: dsPct
+    };
+  }
 
   function renderKPIs() {
     var r = STATE.routes || [];
-    var total = 0, delivered = 0, failed = 0, pnr = 0, running = 0, finished = 0;
+    var s = getDSStats(r);
+    var total = s.total, delivered = s.delivered, failed = s.failed, pnr = s.pnr;
+    var running = 0, finished = 0;
     r.forEach(function (rt) {
-      total += rt.totalPkg || 0; delivered += rt.delivered || 0;
-      failed += rt.failed || 0; pnr += rt.pnr || 0;
-      if (rt.status === 'FINISHED' || rt.status === 'FINALIZADA') finished++;
-      else if (rt.status === 'IN_PROGRESS' || rt.status === 'RUNNING') running++;
+      if (rt.status === 'FINISHED' || rt.status === 'FINALIZADA' || rt.status === 'Encerradas') finished++;
+      else if (rt.status === 'IN_PROGRESS' || rt.status === 'RUNNING' || rt.status === 'Abertas') running++;
     });
     function set(id, txt, sub, color, pulse) {
       var v = document.getElementById('mlm_srj3_kpi_' + id + '_val');
@@ -503,11 +549,11 @@
       if (s) s.textContent = sub || '\u00A0';
       if (c) c.classList.toggle('mlm_kpi_pulse', !!pulse);
     }
-    set('total', fmt(total), r.length + ' rotas');
-    var dsPct = total > 0 ? (delivered / total) * 100 : 0;
+    set('total', fmt(total), r.length + ' rotas' + (s.foraDS > 0 ? ' · ' + s.foraDS + ' fora DS' : ''));
+    var dsPct = s.dsPct;
     set('delivered', fmt(delivered), dsPct.toFixed(1) + '% DS',
         dsPct >= 95 ? T.ok : dsPct >= 90 ? T.warn : T.err);
-    var insPct = total > 0 ? (failed / total) * 100 : 0;
+    var insPct = s.baseDS > 0 ? (failed / s.baseDS) * 100 : 0;
     set('failed', fmt(failed), insPct.toFixed(1) + '%',
         insPct <= 3 ? T.ok : insPct <= 5 ? T.warn : T.err, insPct > 7);
     var pnrPct = total > 0 ? (pnr / total) * 100 : 0;
@@ -520,6 +566,7 @@
 
   // ABAS
   var TABS = [
+    { id: 'ROTAS',      label: 'Rotas' },
     { id: 'OFENSORAS',  label: 'Ofensoras' },
     { id: 'INSUCESSOS', label: 'Insucessos' },
     { id: 'MOTORISTAS', label: 'Motoristas' },
@@ -569,8 +616,13 @@
 
   function renderActiveTab() {
     content.innerHTML = '';
-    if (STATE.loading) { renderSkeleton(); return; }
+    if (STATE.loading && (!STATE.routes || STATE.routes.length === 0)) {
+      renderSkeleton(); return;
+    }
+    // Barra de filtros global no topo de toda aba
+    content.appendChild(renderGlobalFiltersBar());
     switch (STATE.tab) {
+      case 'ROTAS':      renderRotas();      break;
       case 'OFENSORAS':  renderOfensoras();  break;
       case 'INSUCESSOS': renderInsucessos(); break;
       case 'MOTORISTAS': renderMotoristas(); break;
@@ -597,7 +649,276 @@
     var el = document.getElementById('mlm_srj3_footer_count');
     if (el) el.textContent = fmt(shown) + ' de ' + fmt(total) + ' itens';
   }
+// ==========================================================================
+  // FILTROS GLOBAIS
+  // ==========================================================================
+  var RANK_OPTIONS = [
+    { id: 'none',           label: 'Padrão' },
+    { id: 'ins_desc',       label: 'Mais insucessos' },
+    { id: 'ins_asc',        label: 'Menos insucessos' },
+    { id: 'pend_desc',      label: 'Mais pacotes pendentes' },
+    { id: 'pend_asc',       label: 'Menos pacotes pendentes' },
+    { id: 'prog_desc',      label: 'Maior progresso' },
+    { id: 'prog_asc',       label: 'Menor progresso' },
+    { id: 'carrier_az',     label: 'Transportadora A-Z' },
+    { id: 'comercial_desc', label: 'Mais comerciais' }
+  ];
 
+  function applyGlobalFilters(routes) {
+    var g = STATE.globalFilters;
+    var out = routes.filter(function (r) {
+      if (g.status.size  > 0 && !g.status.has(r.status))             return false;
+      if (g.tipo.size    > 0 && !g.tipo.has(r.tipo || r.routeType))  return false;
+      if (g.modal.size   > 0 && !g.modal.has(r.modal || r.vehicle))  return false;
+      if (g.carrier.size > 0 && !g.carrier.has(r.carrier))           return false;
+      if (g.driver.size  > 0 && !g.driver.has(r.driver))             return false;
+      if (g.ciclo.size   > 0 && !g.ciclo.has(String(r.ciclo || r.cycle || ''))) return false;
+      if (g.origem.size  > 0 && !g.origem.has(r.origem || r.origin)) return false;
+      if (g.placa && String(r.placa || r.plate || '').toLowerCase().indexOf(g.placa.toLowerCase()) < 0) return false;
+      return true;
+    });
+
+    var progresso = function (r) {
+      var t = r.totalPkg || 0;
+      if (!t) return 0;
+      return ((r.delivered || 0) / t) * 100;
+    };
+    var pendentes = function (r) {
+      return (r.totalPkg || 0) - (r.delivered || 0) - (r.failed || 0);
+    };
+
+    switch (g.rank) {
+      case 'ins_desc':       out.sort(function (a, b) { return (b.failed || 0) - (a.failed || 0); }); break;
+      case 'ins_asc':        out.sort(function (a, b) { return (a.failed || 0) - (b.failed || 0); }); break;
+      case 'pend_desc':      out.sort(function (a, b) { return pendentes(b) - pendentes(a); }); break;
+      case 'pend_asc':       out.sort(function (a, b) { return pendentes(a) - pendentes(b); }); break;
+      case 'prog_desc':      out.sort(function (a, b) { return progresso(b) - progresso(a); }); break;
+      case 'prog_asc':       out.sort(function (a, b) { return progresso(a) - progresso(b); }); break;
+      case 'carrier_az':     out.sort(function (a, b) { return String(a.carrier || '').localeCompare(String(b.carrier || '')); }); break;
+      case 'comercial_desc': out.sort(function (a, b) { return (b.comerciais || 0) - (a.comerciais || 0); }); break;
+    }
+    return out;
+  }
+// Atualiza conteúdo mantendo o dropdown atual aberto
+  function refreshActiveTabKeepDropdown(activeKey) {
+    // Atualiza só o texto do botão e re-renderiza o conteúdo das abas
+    renderKPIs();
+    // Re-renderiza só o conteúdo (sem destruir barra de filtros)
+    var oldFiltersBar = content.querySelector('[data-mlm-filtersbar="1"]');
+    var newBar = renderGlobalFiltersBar();
+    content.innerHTML = '';
+    content.appendChild(newBar);
+    switch (STATE.tab) {
+      case 'ROTAS':      renderRotas();      break;
+      case 'OFENSORAS':  renderOfensoras();  break;
+      case 'INSUCESSOS': renderInsucessos(); break;
+      case 'MOTORISTAS': renderMotoristas(); break;
+      case 'PNR':        renderPNR();        break;
+      case 'AGENCIAS':   renderAgencias();   break;
+      case 'DEVOLUCOES': renderDevolucoes(); break;
+    }
+    // Reabre o dropdown que estava ativo
+    setTimeout(function () {
+      var btns = content.querySelectorAll('[data-mlm-filter-key="' + activeKey + '"]');
+      if (btns.length > 0) btns[0].click();
+    }, 0);
+  }
+
+  function renderGlobalFiltersBar() {
+    var routes = STATE.routes || [];
+    var g = STATE.globalFilters;
+
+    function uniq(getter) {
+      var s = {};
+      routes.forEach(function (r) { var v = getter(r); if (v) s[v] = true; });
+      return Object.keys(s).sort();
+    }
+
+    var wrap = mk('div',
+      'background:rgba(15,23,42,.5);border:1px solid ' + T.border +
+      ';border-radius:10px;padding:10px 12px;margin-bottom:12px;' +
+      'display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end');
+    wrap.dataset.mlmFiltersbar = '1';
+
+    function multiSel(label, key, opts) {
+      var box = mk('div', 'display:flex;flex-direction:column;gap:3px;min-width:140px;position:relative');
+      box.appendChild(mk('label',
+        'font-size:9px;color:' + T.muted + ';font-weight:600;text-transform:uppercase;letter-spacing:.5px',
+        escapeHTML(label)));
+
+      var count = g[key].size;
+      var btnLabel = count === 0
+        ? 'Todos'
+        : count === 1
+          ? Array.from(g[key])[0]
+          : count + ' selecionados';
+
+      var btn = mk('button',
+        'background:' + T.surface + ';border:1px solid ' + (count > 0 ? T.brand : T.border) +
+        ';color:' + (count > 0 ? T.textHi : T.mutedHi) +
+        ';padding:6px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-family:' + T.fUI +
+        ';display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:30px',
+        '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px">' +
+        escapeHTML(btnLabel) + '</span>' +
+        '<span style="opacity:.6;display:inline-flex">' + ICON.chevD + '</span>');
+
+      var dropdown = mk('div',
+        'position:absolute;top:100%;left:0;margin-top:4px;min-width:200px;max-width:280px;' +
+        'max-height:280px;overflow-y:auto;background:' + T.surfaceHi +
+        ';border:1px solid ' + T.borderHi + ';border-radius:8px;box-shadow:' + T.shadow +
+        ';z-index:' + (T.z + 30) + ';padding:6px;display:none;backdrop-filter:blur(20px)');
+
+      // Campo de busca interno
+      if (opts.length > 8) {
+        var search = mk('input',
+          'width:100%;background:' + T.surface + ';border:1px solid ' + T.border +
+          ';color:' + T.textHi + ';padding:5px 8px;border-radius:5px;font-size:11px;' +
+          'margin-bottom:6px;font-family:' + T.fUI);
+        search.type = 'text';
+        search.placeholder = 'Buscar...';
+        search.oninput = function () {
+          var q = search.value.toLowerCase();
+          listWrap.querySelectorAll('[data-opt]').forEach(function (it) {
+            it.style.display = it.dataset.opt.toLowerCase().indexOf(q) >= 0 ? 'flex' : 'none';
+          });
+        };
+        dropdown.appendChild(search);
+      }
+
+      var listWrap = mk('div', 'display:flex;flex-direction:column;gap:1px');
+      dropdown.appendChild(listWrap);
+
+      if (opts.length === 0) {
+        listWrap.appendChild(mk('div',
+          'padding:8px;color:' + T.muted + ';font-size:11px;font-style:italic;text-align:center',
+          'Sem opções'));
+      }
+
+      opts.forEach(function (o) {
+        var item = mk('label',
+          'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;cursor:pointer;' +
+          'font-size:11px;color:' + T.mutedHi + ';transition:background .1s ease;user-select:none');
+        item.dataset.opt = String(o);
+        item.onmouseenter = function () { item.style.background = 'rgba(124,58,237,.12)'; };
+        item.onmouseleave = function () { item.style.background = 'transparent'; };
+        var cb = mk('input', 'accent-color:' + T.brand + ';cursor:pointer;width:13px;height:13px');
+        cb.type = 'checkbox';
+        cb.checked = g[key].has(o);
+        cb.onchange = function (ev) {
+          ev.stopPropagation();
+          if (cb.checked) g[key].add(o); else g[key].delete(o);
+          // Atualiza só o conteúdo, mantém o dropdown aberto
+          refreshActiveTabKeepDropdown(key);
+        };
+        var txt = mk('span',
+          'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
+          escapeHTML(String(o)));
+        item.appendChild(cb);
+        item.appendChild(txt);
+        listWrap.appendChild(item);
+      });
+
+      // Botões "Marcar todos" / "Limpar" no rodapé
+      if (opts.length > 1) {
+        var footer = mk('div',
+          'display:flex;gap:4px;margin-top:6px;padding-top:6px;border-top:1px solid ' + T.border);
+        var bAll = mk('button',
+          'flex:1;background:transparent;border:1px solid ' + T.border + ';color:' + T.mutedHi +
+          ';padding:4px;border-radius:5px;font-size:10px;cursor:pointer', 'Todos');
+        bAll.onclick = function (e) {
+          e.stopPropagation();
+          opts.forEach(function (o) { g[key].add(o); });
+          refreshActiveTabKeepDropdown(key);
+        };
+        var bNone = mk('button',
+          'flex:1;background:transparent;border:1px solid ' + T.border + ';color:' + T.mutedHi +
+          ';padding:4px;border-radius:5px;font-size:10px;cursor:pointer', 'Limpar');
+        bNone.onclick = function (e) {
+          e.stopPropagation();
+          g[key].clear();
+          refreshActiveTabKeepDropdown(key);
+        };
+        footer.appendChild(bAll);
+        footer.appendChild(bNone);
+        dropdown.appendChild(footer);
+      }
+
+      btn.dataset.mlmFilterKey = key;
+      btn.onclick = function (e) {
+        e.stopPropagation();
+        // Fecha outros dropdowns abertos
+        document.querySelectorAll('[data-mlm-dropdown="1"]').forEach(function (d) {
+          if (d !== dropdown) d.style.display = 'none';
+        });
+        dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+      };
+      dropdown.dataset.mlmDropdown = '1';
+
+      box.appendChild(btn);
+      box.appendChild(dropdown);
+      return box;
+    }
+
+    function txtInput(label, key, type) {
+      var box = mk('div', 'display:flex;flex-direction:column;gap:3px;min-width:110px');
+      box.appendChild(mk('label',
+        'font-size:9px;color:' + T.muted + ';font-weight:600;text-transform:uppercase;letter-spacing:.5px',
+        escapeHTML(label)));
+      var inp = mk('input',
+        'background:' + T.surface + ';border:1px solid ' + T.border + ';color:' + T.textHi +
+        ';padding:5px 8px;border-radius:6px;font-size:11px;font-family:' + T.fMono +
+        (type === 'date' ? ';color-scheme:dark' : ''));
+      inp.type = type || 'text';
+      inp.value = g[key] || '';
+      if (type !== 'date') inp.placeholder = '...';
+      inp.oninput = function () { g[key] = inp.value; renderActiveTab(); };
+      inp.onchange = function () { g[key] = inp.value; renderActiveTab(); };
+      box.appendChild(inp);
+      return box;
+    }
+
+    function rankSel() {
+      var box = mk('div', 'display:flex;flex-direction:column;gap:3px;min-width:170px');
+      box.appendChild(mk('label',
+        'font-size:9px;color:' + T.muted + ';font-weight:600;text-transform:uppercase;letter-spacing:.5px',
+        'Ranquear por'));
+      var sel = mk('select',
+        'background:' + T.surface + ';border:1px solid ' + T.border + ';color:' + T.textHi +
+        ';padding:5px 8px;border-radius:6px;font-size:11px;font-family:' + T.fUI);
+      RANK_OPTIONS.forEach(function (o) {
+        var op = mk('option', '', escapeHTML(o.label));
+        op.value = o.id;
+        if (g.rank === o.id) op.selected = true;
+        sel.appendChild(op);
+      });
+      sel.onchange = function () { g.rank = sel.value; renderActiveTab(); };
+      box.appendChild(sel);
+      return box;
+    }
+
+    wrap.appendChild(multiSel('Status',         'status',  ['Abertas', 'Encerradas']));
+    wrap.appendChild(multiSel('Tipo de rota',   'tipo',    ['Entrega', 'Mista', 'Coleta']));
+    wrap.appendChild(multiSel('Modal',          'modal',   uniq(function (r) { return r.modal || r.vehicle; })));
+    wrap.appendChild(multiSel('Transportadora', 'carrier', uniq(function (r) { return r.carrier; })));
+    wrap.appendChild(multiSel('Motorista',      'driver',  uniq(function (r) { return r.driver; })));
+    wrap.appendChild(multiSel('Ciclo',          'ciclo',   ['CHP', 'AM1', 'PM1', 'SD']));
+    wrap.appendChild(multiSel('Origem',         'origem',  uniq(function (r) { return r.origem || r.origin; })));
+    wrap.appendChild(txtInput('Placa',          'placa'));
+    wrap.appendChild(rankSel());
+
+    var btnClear = mk('button', '', '<span>Limpar</span>');
+    btnClear.className = 'mlm_btn mlm_btn_err';
+    btnClear.style.alignSelf = 'flex-end';
+    btnClear.onclick = function () {
+      g.status.clear(); g.tipo.clear(); g.modal.clear(); g.carrier.clear();
+      g.driver.clear(); g.ciclo.clear(); g.origem.clear();
+      g.placa = ''; g.rank = 'none';
+      renderActiveTab();
+    };
+    wrap.appendChild(btnClear);
+
+    return wrap;
+  }
   // HELPERS DE RENDER
   function chipFilter(opts) {
     var wrap = mk('div', 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px');
@@ -712,13 +1033,174 @@
     tbl.appendChild(tbody);
     return tbl;
   }
+// ==========================================================================
+  // RENDER ROTAS (todas as rotas com filtros aplicados)
+  // ==========================================================================
+  function renderRotas() {
+    var routes = applyGlobalFilters(STATE.routes || []);
+    var totalRoutes = (STATE.routes || []).length;
 
+    // === Mini resumo no topo ===
+    var stats = getDSStats(routes);
+    var summaryBar = mk('div',
+      'display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px');
+    function miniStat(label, val, color) {
+      var c = mk('div',
+        'background:' + T.surface + ';border:1px solid ' + T.border +
+        ';border-left:3px solid ' + color + ';border-radius:8px;padding:8px 10px');
+      c.appendChild(mk('div',
+        'font-size:9px;color:' + T.muted + ';font-weight:600;text-transform:uppercase',
+        escapeHTML(label)));
+      c.appendChild(mk('div',
+        'font-size:15px;font-weight:700;color:' + T.textHi + ';font-family:' + T.fMono +
+        ';margin-top:3px', String(val)));
+      return c;
+    }
+    summaryBar.appendChild(miniStat('Rotas filtradas', routes.length + '/' + totalRoutes, T.brand2));
+    summaryBar.appendChild(miniStat('Pacotes', fmt(stats.total), T.info));
+    summaryBar.appendChild(miniStat('Entregues', fmt(stats.delivered), T.ok));
+    summaryBar.appendChild(miniStat('DS%', stats.dsPct.toFixed(1) + '%',
+      stats.dsPct >= 95 ? T.ok : stats.dsPct >= 90 ? T.warn : T.err));
+    summaryBar.appendChild(miniStat('Pendentes',
+      fmt(Math.max(0, stats.total - stats.delivered - stats.failed - stats.foraDS)), T.warn));
+    content.appendChild(summaryBar);
+
+    // === Export bar ===
+    content.appendChild(exportBar('ROTAS',
+      function () {
+        return routes.map(function (r) {
+          var pendentes = Math.max(0, (r.totalPkg || 0) - (r.delivered || 0) - (r.failed || 0));
+          var prog = r.totalPkg > 0 ? ((r.delivered || 0) / r.totalPkg * 100).toFixed(1) + '%' : '0%';
+          return {
+            rota: r.routeId, motorista: r.driver, placa: r.placa || r.plate || '',
+            carrier: r.carrier, ciclo: r.ciclo || r.cycle || '', tipo: r.tipo || r.routeType || '',
+            modal: r.modal || r.vehicle || '', origem: r.origem || r.origin || '',
+            status: r.status, total: r.totalPkg, entregues: r.delivered,
+            pendentes: pendentes, insucessos: r.failed, pnr: r.pnr, progresso: prog
+          };
+        });
+      },
+      [
+        { key: 'rota', label: 'Rota' }, { key: 'motorista', label: 'Motorista' },
+        { key: 'placa', label: 'Placa' }, { key: 'carrier', label: 'Transp.' },
+        { key: 'ciclo', label: 'Ciclo' }, { key: 'tipo', label: 'Tipo' },
+        { key: 'modal', label: 'Modal' }, { key: 'origem', label: 'Origem' },
+        { key: 'status', label: 'Status' }, { key: 'total', label: 'Total' },
+        { key: 'entregues', label: 'Entreg.' }, { key: 'pendentes', label: 'Pend.' },
+        { key: 'insucessos', label: 'Insuc.' }, { key: 'pnr', label: 'PNR' },
+        { key: 'progresso', label: 'Progresso' }
+      ], 'Rotas — ' + STATE.ssc + ' — ' + STATE.date));
+
+    // === Estado vazio ===
+    if (routes.length === 0) {
+      content.appendChild(mk('div',
+        'text-align:center;padding:40px;color:' + T.muted + ';font-style:italic',
+        'Nenhuma rota encontrada com os filtros aplicados.'));
+      setFooterCount(0, totalRoutes);
+      return;
+    }
+
+    // === Cards de rotas ===
+    var grid = mk('div', 'display:flex;flex-direction:column;gap:8px');
+    routes.forEach(function (r) {
+      var pendentes = Math.max(0, (r.totalPkg || 0) - (r.delivered || 0) - (r.failed || 0));
+      var prog = r.totalPkg > 0 ? ((r.delivered || 0) / r.totalPkg) * 100 : 0;
+      var statusColor =
+        (r.status === 'FINISHED' || r.status === 'FINALIZADA') ? T.ok :
+        (r.status === 'IN_PROGRESS' || r.status === 'RUNNING') ? T.info : T.muted;
+
+      var card = mk('div',
+        'background:' + T.surface + ';border:1px solid ' + T.border +
+        ';border-left:3px solid ' + statusColor + ';border-radius:10px;padding:12px 14px');
+
+      // Linha 1 — Rota + tags
+      var line1 = mk('div', 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px');
+      line1.appendChild(mk('div',
+        'font-family:' + T.fMono + ';font-size:13px;font-weight:700;color:' + T.textHi,
+        escapeHTML(r.routeId || '—')));
+      if (r.ciclo || r.cycle) {
+        line1.appendChild(mk('span',
+          'background:rgba(6,182,212,.15);color:' + T.brand2 + ';font-size:10px;font-weight:700;' +
+          'padding:2px 8px;border-radius:6px;font-family:' + T.fMono,
+          escapeHTML(r.ciclo || r.cycle)));
+      }
+      if (r.tipo || r.routeType) {
+        line1.appendChild(mk('span',
+          'background:rgba(124,58,237,.15);color:' + T.brand + ';font-size:10px;font-weight:700;' +
+          'padding:2px 8px;border-radius:6px',
+          escapeHTML(r.tipo || r.routeType)));
+      }
+      if (r.modal || r.vehicle) {
+        line1.appendChild(mk('span',
+          'background:rgba(148,163,184,.1);color:' + T.mutedHi + ';font-size:10px;font-weight:600;' +
+          'padding:2px 8px;border-radius:6px',
+          escapeHTML(r.modal || r.vehicle)));
+      }
+      line1.appendChild(mk('span',
+        'color:' + statusColor + ';font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;' +
+        'background:' + (statusColor === T.ok ? 'rgba(16,185,129,.15)' :
+                          statusColor === T.info ? 'rgba(6,182,212,.15)' : 'rgba(148,163,184,.15)'),
+        escapeHTML(r.status || '—')));
+      line1.appendChild(mk('span',
+        'font-size:10px;color:' + T.muted + ';margin-left:auto;font-family:' + T.fMono,
+        escapeHTML(r.carrier || '') + (r.origem || r.origin ? ' · ' + escapeHTML(r.origem || r.origin) : '')));
+      card.appendChild(line1);
+
+      // Linha 2 — Motorista + placa
+      var line2 = mk('div', 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px');
+      line2.appendChild(mk('div',
+        'font-size:12px;color:' + T.mutedHi,
+        '👤 ' + escapeHTML(r.driver || 'Sem motorista')));
+      if (r.placa || r.plate) {
+        line2.appendChild(mk('span',
+          'background:rgba(6,182,212,.15);color:' + T.brand2 + ';font-size:11px;font-weight:700;' +
+          'padding:2px 8px;border-radius:6px;font-family:' + T.fMono,
+          escapeHTML(r.placa || r.plate)));
+      }
+      card.appendChild(line2);
+
+      // Linha 3 — Stats
+      var stats = mk('div', 'display:flex;gap:14px;font-size:11px;flex-wrap:wrap;margin-bottom:8px');
+      function stat(lbl, val, color) {
+        return mk('div', '',
+          '<span style="color:' + T.muted + '">' + escapeHTML(lbl) + ':</span> ' +
+          '<span style="color:' + color + ';font-family:' + T.fMono + ';font-weight:600">' +
+          escapeHTML(String(val)) + '</span>');
+      }
+      stats.appendChild(stat('Total', fmt(r.totalPkg || 0), T.text));
+      stats.appendChild(stat('Entregues', fmt(r.delivered || 0), T.ok));
+      stats.appendChild(stat('Pendentes', fmt(pendentes), T.warn));
+      stats.appendChild(stat('Insucessos', fmt(r.failed || 0), T.err));
+      stats.appendChild(stat('PNR', fmt(r.pnr || 0), T.warn));
+      card.appendChild(stats);
+
+      // Barra de progresso
+      var progWrap = mk('div',
+        'background:rgba(15,23,42,.6);border-radius:6px;height:6px;overflow:hidden;position:relative');
+      var progBar = mk('div',
+        'height:100%;width:' + prog.toFixed(1) + '%;background:' +
+        (prog >= 95 ? T.ok : prog >= 70 ? T.brand2 : prog >= 40 ? T.warn : T.err) +
+        ';transition:width .3s ease');
+      progWrap.appendChild(progBar);
+      var progLbl = mk('div',
+        'font-size:10px;color:' + T.muted + ';font-family:' + T.fMono +
+        ';margin-top:3px;text-align:right',
+        'Progresso: ' + prog.toFixed(1) + '%');
+      card.appendChild(progWrap);
+      card.appendChild(progLbl);
+
+      grid.appendChild(card);
+    });
+    content.appendChild(grid);
+    setFooterCount(routes.length, totalRoutes);
+  }
+  
   // ==========================================================================
   // RENDER OFENSORAS
   // ==========================================================================
   function renderOfensoras() {
-    var routes = STATE.routes || [];
-    var ofensoras = routes.filter(function (r) {
+    var allRoutes = applyGlobalFilters(STATE.routes || []);
+    var ofensoras = allRoutes.filter(function (r) {
       return (r.failed || 0) > 0 || (r.pnr || 0) > 0;
     });
     ofensoras.sort(function (a, b) {
@@ -737,11 +1219,71 @@
       return true;
     });
 
+    // ====== TOP 5 MOTIVOS DE OFENSA ======
+    var motivosCount = {};
+    filtered.forEach(function (r) {
+      (r.failures || []).forEach(function (pk) {
+        var m = pk.reason || 'Sem motivo';
+        motivosCount[m] = (motivosCount[m] || 0) + 1;
+      });
+      (r.pnrList || []).forEach(function (pk) {
+        var m = 'PNR: ' + (pk.reason || 'Não retirado');
+        motivosCount[m] = (motivosCount[m] || 0) + 1;
+      });
+    });
+    var motivosArr = Object.keys(motivosCount).map(function (k) {
+      return { motivo: k, qtd: motivosCount[k] };
+    }).sort(function (a, b) { return b.qtd - a.qtd; });
+    var top5 = motivosArr.slice(0, 5);
+    var totalMotivos = motivosArr.reduce(function (s, m) { return s + m.qtd; }, 0) || 1;
+
     content.appendChild(mk('div',
       'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:10px',
       'Rotas Ofensoras <span style="color:' + T.muted + ';font-size:11px">(' +
       filtered.length + ' de ' + ofensoras.length + ')</span>'));
 
+    // === TABELA TOP 5 ===
+    if (top5.length > 0) {
+      var topCard = mk('div',
+        'background:' + T.surface + ';border:1px solid ' + T.border +
+        ';border-left:3px solid ' + T.err + ';border-radius:10px;padding:12px 14px;margin-bottom:14px');
+      topCard.appendChild(mk('div',
+        'font-size:12px;font-weight:600;color:' + T.textHi + ';margin-bottom:8px',
+        '🔥 TOP 5 Motivos de Ofensa'));
+      var topTbl = mk('table',
+        'width:100%;border-collapse:separate;border-spacing:0;font-size:12px');
+      var thead = mk('thead'); var trh = mk('tr');
+      ['#', 'Motivo', 'Qtd', '%'].forEach(function (h) {
+        trh.appendChild(mk('th',
+          'padding:8px 10px;text-align:left;font-size:10px;color:' + T.muted +
+          ';font-weight:600;text-transform:uppercase;border-bottom:1px solid ' + T.border, h));
+      });
+      thead.appendChild(trh); topTbl.appendChild(thead);
+      var tbody = mk('tbody');
+      top5.forEach(function (m, i) {
+        var tr = mk('tr');
+        var color = i === 0 ? T.err : i === 1 ? T.warn : T.mutedHi;
+        tr.appendChild(mk('td',
+          'padding:8px 10px;color:' + color + ';font-family:' + T.fMono +
+          ';font-weight:700;border-bottom:1px solid ' + T.border, '#' + (i + 1)));
+        tr.appendChild(mk('td',
+          'padding:8px 10px;color:' + T.textHi + ';border-bottom:1px solid ' + T.border,
+          escapeHTML(m.motivo)));
+        tr.appendChild(mk('td',
+          'padding:8px 10px;color:' + T.err + ';font-family:' + T.fMono +
+          ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(m.qtd)));
+        tr.appendChild(mk('td',
+          'padding:8px 10px;color:' + T.mutedHi + ';font-family:' + T.fMono +
+          ';border-bottom:1px solid ' + T.border,
+          ((m.qtd / totalMotivos) * 100).toFixed(1) + '%'));
+        tbody.appendChild(tr);
+      });
+      topTbl.appendChild(tbody);
+      topCard.appendChild(topTbl);
+      content.appendChild(topCard);
+    }
+
+    // === FILTROS LOCAIS DA ABA ===
     if (carriers.length > 0) content.appendChild(chipFilter({
       label: 'Carrier', values: carriers, selectedSet: f.carrier,
       onChange: function () { renderActiveTab(); }
@@ -769,13 +1311,21 @@
         { key: 'status', label: 'Status' }
       ], 'Rotas Ofensoras — ' + STATE.ssc + ' — ' + STATE.date));
 
+    // === RANKING DE OFENSORES ===
+    content.appendChild(mk('div',
+      'font-size:12px;font-weight:600;color:' + T.textHi + ';margin:14px 0 8px 0',
+      '📊 Ranking de Ofensores (' + filtered.length + ')'));
+
     var grid = mk('div', 'display:flex;flex-direction:column;gap:10px');
-    filtered.forEach(function (r) {
+    filtered.forEach(function (r, idx) {
       var card = mk('div',
         'background:' + T.surface + ';border:1px solid ' + T.border + ';border-radius:10px;' +
         'padding:12px 14px;border-left:3px solid ' +
         ((r.failed || 0) > 5 ? T.err : (r.failed || 0) > 2 ? T.warn : T.info));
       var top = mk('div', 'display:flex;align-items:center;gap:12px;flex-wrap:wrap');
+      top.appendChild(mk('span',
+        'background:' + T.gradSoft + ';color:' + T.textHi + ';font-size:11px;font-weight:700;' +
+        'padding:2px 8px;border-radius:8px;font-family:' + T.fMono, '#' + (idx + 1)));
       top.appendChild(mk('div',
         'font-family:' + T.fMono + ';font-size:13px;font-weight:600;color:' + T.textHi,
         escapeHTML(r.routeId || '—')));
@@ -1315,34 +1865,80 @@
 
   function openReportModal() {
     var routes = STATE.routes || [];
-    var total = 0, delivered = 0, failed = 0, pnr = 0, finished = 0;
+    var stats = getDSStats(routes);
+    var finished = 0, running = 0, notStarted = 0;
     routes.forEach(function (r) {
-      total += r.totalPkg || 0; delivered += r.delivered || 0;
-      failed += r.failed || 0; pnr += r.pnr || 0;
-      if (r.status === 'FINISHED') finished++;
+      if (r.status === 'FINISHED' || r.status === 'FINALIZADA' || r.status === 'Encerradas') finished++;
+      else if (r.status === 'IN_PROGRESS' || r.status === 'RUNNING' || r.status === 'Abertas') running++;
+      else notStarted++;
     });
-    var dsPct = total > 0 ? ((delivered / total) * 100).toFixed(1) : '0.0';
+    var pendentes = Math.max(0, stats.total - stats.delivered - stats.failed - stats.foraDS);
+
+    // Top 3 ofensoras
+    var top3 = routes.slice().filter(function (r) {
+      return (r.failed || 0) > 0;
+    }).sort(function (a, b) { return (b.failed || 0) - (a.failed || 0); }).slice(0, 3);
+
+    // Top 3 motivos de insucesso (já descontando "fora do DS")
+    var motivosMap = {};
+    routes.forEach(function (r) {
+      (r.failures || []).forEach(function (f) {
+        if (isInsucessoForaDoDS(f.reason)) return;
+        var m = f.reason || 'Sem motivo';
+        motivosMap[m] = (motivosMap[m] || 0) + 1;
+      });
+    });
+    var topMotivos = Object.keys(motivosMap).map(function (k) {
+      return { motivo: k, qtd: motivosMap[k] };
+    }).sort(function (a, b) { return b.qtd - a.qtd; }).slice(0, 3);
+
     var d = new Date(STATE.date + 'T12:00:00');
     var dataFmt = pad(d.getDate()) + '/' + pad(d.getMonth() + 1);
     var now = new Date();
     var horaFmt = pad(now.getHours()) + ':' + pad(now.getMinutes());
-    var textoWA =
-      '*' + STATE.ssc + ' - ' + dataFmt + ' - ' + horaFmt + '*\n' +
-      '📦 ' + fmt(total) + ' Pacotes\n' +
-      '🎯 DS: ' + dsPct + '%\n' +
-      '🔴 Insucessos: ' + fmt(failed) + '\n' +
-      '🟡 PNR: ' + fmt(pnr) + '\n' +
-      '🟢 Rotas finalizadas: ' + fmt(finished) + '/' + fmt(routes.length);
 
-    var modal = openModal({ title: 'Report Hora a Hora', width: '520px' });
+    var dsEmoji = stats.dsPct >= 95 ? '🟢' : stats.dsPct >= 90 ? '🟡' : '🔴';
+    var progRotas = routes.length > 0 ? ((finished / routes.length) * 100).toFixed(0) : 0;
+
+    var textoWA =
+      '*🚚 ' + STATE.ssc + ' • REPORT ' + horaFmt + ' • ' + dataFmt + '*\n' +
+      '━━━━━━━━━━━━━━━━━━━━\n\n' +
+      '📦 *Pacotes:* ' + fmt(stats.total) + '\n' +
+      '✅ *Entregues:* ' + fmt(stats.delivered) + ' (' + stats.dsPct.toFixed(1) + '%)\n' +
+      '⏳ *Pendentes:* ' + fmt(pendentes) + '\n' +
+      '🔴 *Insucessos:* ' + fmt(stats.failed) +
+        (stats.foraDS > 0 ? '  _(+' + stats.foraDS + ' fora DS)_' : '') + '\n' +
+      '🟡 *PNR:* ' + fmt(stats.pnr) + '\n\n' +
+      '*🎯 DS Operacional:* ' + dsEmoji + ' *' + stats.dsPct.toFixed(2) + '%*\n\n' +
+      '*🛣️ Rotas:* ' + routes.length + ' total\n' +
+      '  ✅ Encerradas: ' + finished + ' (' + progRotas + '%)\n' +
+      '  🔄 Em andamento: ' + running + '\n' +
+      (notStarted > 0 ? '  ⏸️ Não iniciadas: ' + notStarted + '\n' : '');
+
+    if (topMotivos.length > 0) {
+      textoWA += '\n*🔥 Top motivos de insucesso:*\n';
+      topMotivos.forEach(function (m, i) {
+        textoWA += (i + 1) + '. ' + m.motivo + ' — ' + m.qtd + '\n';
+      });
+    }
+    if (top3.length > 0) {
+      textoWA += '\n*⚠️ Top rotas ofensoras:*\n';
+      top3.forEach(function (r, i) {
+        textoWA += (i + 1) + '. ' + r.routeId + ' (' + (r.driver || '—') + ') — ' +
+                   (r.failed || 0) + ' insuc.\n';
+      });
+    }
+    textoWA += '\n_Atualizado em ' + horaFmt + ' • Monitor LM v' + APP.version + '_';
+
+    var modal = openModal({ title: 'Report Hora a Hora', width: '580px' });
     modal.body.appendChild(mk('div',
       'font-size:11px;color:' + T.muted + ';margin-bottom:10px',
-      'Texto pronto para colar no WhatsApp.'));
+      'Texto formatado pronto para colar no WhatsApp.'));
     var ta = mk('textarea',
-      'width:100%;min-height:200px;background:' + T.surface +
+      'width:100%;min-height:380px;background:' + T.surface +
       ';border:1px solid ' + T.border + ';color:' + T.textHi +
       ';padding:14px;border-radius:10px;font-family:' + T.fMono +
-      ';font-size:13px;line-height:1.6;resize:vertical');
+      ';font-size:12px;line-height:1.6;resize:vertical');
     ta.value = textoWA;
     modal.body.appendChild(ta);
 
@@ -1351,7 +1947,7 @@
       'border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;' +
       'align-items:center;gap:6px';
     btnCopiar.onclick = function () {
-      copyText(ta.value).then(function () { toast('Copiado', 'ok'); })
+      copyText(ta.value).then(function () { toast('Copiado!', 'ok'); })
         .catch(function () { toast('Falha ao copiar', 'err'); });
     };
     var btnFechar = mk('button', '', '<span>Fechar</span>');
@@ -1363,22 +1959,68 @@
 
   function openFechamentoModal() {
     var routes = STATE.routes || [];
-    var total = 0, delivered = 0, failed = 0, pnr = 0, finished = 0;
+    var stats = getDSStats(routes);
+    var total = stats.total, delivered = stats.delivered;
+    var failed = stats.failed, pnr = stats.pnr, foraDS = stats.foraDS;
+    var dsPct = stats.dsPct.toFixed(2);
+    var finished = 0, running = 0;
     routes.forEach(function (r) {
-      total += r.totalPkg || 0; delivered += r.delivered || 0;
-      failed += r.failed || 0; pnr += r.pnr || 0;
-      if (r.status === 'FINISHED') finished++;
+      if (r.status === 'FINISHED' || r.status === 'FINALIZADA' || r.status === 'Encerradas') finished++;
+      else if (r.status === 'IN_PROGRESS' || r.status === 'RUNNING' || r.status === 'Abertas') running++;
     });
-    var dsPct = total > 0 ? ((delivered / total) * 100).toFixed(1) : '0.0';
+    var pendentes = Math.max(0, total - delivered - failed - foraDS);
+
+    // Top 5 ofensoras
     var top5 = routes.slice().filter(function (r) {
       return (r.failed || 0) > 0 || (r.pnr || 0) > 0;
     }).sort(function (a, b) {
       return ((b.failed || 0) + (b.pnr || 0)) - ((a.failed || 0) + (a.pnr || 0));
     }).slice(0, 5);
+
+    // Top 5 motivos (descontando "fora do DS")
+    var motivosMap = {};
+    routes.forEach(function (r) {
+      (r.failures || []).forEach(function (f) {
+        if (isInsucessoForaDoDS(f.reason)) return;
+        var m = f.reason || 'Sem motivo';
+        motivosMap[m] = (motivosMap[m] || 0) + 1;
+      });
+    });
+    var topMotivos = Object.keys(motivosMap).map(function (k) {
+      return { motivo: k, qtd: motivosMap[k] };
+    }).sort(function (a, b) { return b.qtd - a.qtd; }).slice(0, 5);
+
+    // Performance por transportadora
+    var byCarrier = {};
+    routes.forEach(function (r) {
+      var c = r.carrier || '—';
+      if (!byCarrier[c]) byCarrier[c] = { total: 0, delivered: 0, failed: 0, foraDS: 0, routes: 0 };
+      var b = byCarrier[c];
+      b.total += r.totalPkg || 0;
+      b.delivered += r.delivered || 0;
+      b.routes++;
+      (r.failures || []).forEach(function (f) {
+        if (isInsucessoForaDoDS(f.reason)) b.foraDS++;
+        else b.failed++;
+      });
+      if (!r.failures || r.failures.length === 0) b.failed += r.failed || 0;
+    });
+    var carriersArr = Object.keys(byCarrier).map(function (k) {
+      var b = byCarrier[k];
+      var base = b.total - b.foraDS;
+      b.dsPct = base > 0 ? (b.delivered / base) * 100 : 0;
+      b.name = k;
+      return b;
+    }).sort(function (a, b) { return b.dsPct - a.dsPct; });
+
     var d = new Date(STATE.date + 'T12:00:00');
     var dataFmt = pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear();
+    var now = new Date();
+    var horaFmt = pad(now.getHours()) + ':' + pad(now.getMinutes());
 
-    var modal = openModal({ title: 'Gerar Fechamento', width: '760px' });
+    var dsEmoji = stats.dsPct >= 95 ? '🟢' : stats.dsPct >= 90 ? '🟡' : '🔴';
+
+    var modal = openModal({ title: 'Gerar Fechamento', width: '820px' });
     var grid = mk('div', 'display:grid;grid-template-columns:1fr 1fr;gap:16px');
     modal.body.appendChild(grid);
     var form = mk('div', 'display:flex;flex-direction:column;gap:10px');
@@ -1409,36 +2051,99 @@
     var inpOperador = fld('Operador');
     var inpObs = fld('Observações', 'textarea');
     var inpAcoes = fld('Ações tomadas', 'textarea');
-    var inpPendencia = fld('Pendências', 'textarea');
+    var inpPendencia = fld('Pendências / Follow-up', 'textarea');
 
     var preview = mk('div',
       'background:' + T.surface + ';border:1px solid ' + T.border + ';border-radius:10px;' +
       'padding:12px;font-family:' + T.fMono + ';font-size:11px;color:' + T.mutedHi +
-      ';line-height:1.6;white-space:pre-wrap;max-height:380px;overflow-y:auto');
+      ';line-height:1.6;white-space:pre-wrap;max-height:520px;overflow-y:auto');
     grid.appendChild(preview);
 
     function buildText() {
-      var t = '=== FECHAMENTO ' + STATE.ssc + ' — ' + dataFmt + ' ===\n\n';
-      t += 'KPIs:\n';
-      t += '  Total Pacotes: ' + fmt(total) + '\n';
-      t += '  Entregues: ' + fmt(delivered) + ' (' + dsPct + '%)\n';
-      t += '  Insucessos: ' + fmt(failed) + '\n';
-      t += '  PNR: ' + fmt(pnr) + '\n';
-      t += '  Rotas Finalizadas: ' + finished + '/' + routes.length + '\n\n';
-      if (top5.length > 0) {
-        t += 'Top 5 Rotas Ofensoras:\n';
-        top5.forEach(function (r, i) {
-          t += '  ' + (i + 1) + '. ' + r.routeId + ' · ' + (r.driver || '—') +
-               ' · Insuc: ' + (r.failed || 0) + ' · PNR: ' + (r.pnr || 0) + '\n';
+      var t = '';
+      t += '╔══════════════════════════════════════════╗\n';
+      t += '║  FECHAMENTO ' + STATE.ssc + ' • ' + dataFmt + '            \n';
+      t += '╚══════════════════════════════════════════╝\n\n';
+      t += '📅 Gerado em: ' + dataFmt + ' às ' + horaFmt + '\n';
+      if (inpOperador.value) t += '👤 Operador: ' + inpOperador.value + '\n';
+      t += '\n';
+
+      t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+      t += '📊 INDICADORES GERAIS\n';
+      t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+      t += '  📦 Total de Pacotes: ' + fmt(total) + '\n';
+      t += '  ✅ Entregues:        ' + fmt(delivered) + '\n';
+      t += '  ⏳ Pendentes:        ' + fmt(pendentes) + '\n';
+      t += '  🔴 Insucessos:       ' + fmt(failed) + '\n';
+      if (foraDS > 0) {
+        t += '  ⚪ Fora do DS:       ' + fmt(foraDS) + '  (não contabilizados)\n';
+      }
+      t += '  🟡 PNR:              ' + fmt(pnr) + '\n\n';
+      t += '  🎯 DS Operacional:   ' + dsEmoji + ' ' + dsPct + '%\n';
+      if (foraDS > 0) {
+        t += '     (base ajustada: ' + fmt(stats.baseDS) + ' pacotes)\n';
+      }
+      t += '\n';
+
+      t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+      t += '🛣️  STATUS DAS ROTAS\n';
+      t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+      t += '  Total de Rotas:    ' + routes.length + '\n';
+      t += '  ✅ Encerradas:     ' + finished + ' (' +
+           (routes.length > 0 ? ((finished / routes.length) * 100).toFixed(0) : 0) + '%)\n';
+      t += '  🔄 Em andamento:   ' + running + '\n\n';
+
+      if (carriersArr.length > 0) {
+        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        t += '🏢 DESEMPENHO POR TRANSPORTADORA\n';
+        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        carriersArr.forEach(function (c, i) {
+          var em = c.dsPct >= 95 ? '🟢' : c.dsPct >= 90 ? '🟡' : '🔴';
+          t += '  ' + em + ' ' + c.name + '\n';
+          t += '     Rotas: ' + c.routes + ' · Pacotes: ' + fmt(c.total) +
+               ' · DS: ' + c.dsPct.toFixed(1) + '% · Insuc: ' + c.failed + '\n';
         });
         t += '\n';
       }
-      if (inpOperador.value)  t += 'Operador: ' + inpOperador.value + '\n\n';
-      if (inpObs.value)       t += 'Observações:\n' + inpObs.value + '\n\n';
-      if (inpAcoes.value)     t += 'Ações Tomadas:\n' + inpAcoes.value + '\n\n';
-      if (inpPendencia.value) t += 'Pendências:\n' + inpPendencia.value + '\n';
+
+      if (topMotivos.length > 0) {
+        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        t += '🔥 TOP 5 MOTIVOS DE INSUCESSO\n';
+        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        topMotivos.forEach(function (m, i) {
+          t += '  ' + (i + 1) + '. ' + m.motivo + ' — ' + m.qtd + '\n';
+        });
+        t += '\n';
+      }
+
+      if (top5.length > 0) {
+        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        t += '⚠️  TOP 5 ROTAS OFENSORAS\n';
+        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        top5.forEach(function (r, i) {
+          t += '  ' + (i + 1) + '. ' + r.routeId + '\n';
+          t += '     👤 ' + (r.driver || '—') + '  ·  🏢 ' + (r.carrier || '—') + '\n';
+          t += '     🔴 Insuc: ' + (r.failed || 0) + '  ·  🟡 PNR: ' + (r.pnr || 0) +
+               '  ·  📦 ' + (r.totalPkg || 0) + ' pkg\n';
+        });
+        t += '\n';
+      }
+
+      if (inpObs.value || inpAcoes.value || inpPendencia.value) {
+        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        t += '📝 NOTAS DO OPERADOR\n';
+        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        if (inpObs.value)       t += '\n📌 Observações:\n' + inpObs.value + '\n';
+        if (inpAcoes.value)     t += '\n⚙️ Ações Tomadas:\n' + inpAcoes.value + '\n';
+        if (inpPendencia.value) t += '\n⏭️ Pendências / Follow-up:\n' + inpPendencia.value + '\n';
+        t += '\n';
+      }
+
+      t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+      t += 'Monitor Last Mile v' + APP.version + ' · ' + STATE.ssc + '\n';
       return t;
     }
+
     function refresh() { preview.textContent = buildText(); }
     [inpOperador, inpObs, inpAcoes, inpPendencia].forEach(function (el) { el.oninput = refresh; });
     refresh();
@@ -1448,8 +2153,7 @@
       'border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;' +
       'align-items:center;gap:6px';
     btnCopiar.onclick = function () {
-      copyText(buildText()).then(function ()
- { toast('Fechamento copiado', 'ok'); })
+      copyText(buildText()).then(function () { toast('Fechamento copiado', 'ok'); })
         .catch(function () { toast('Falha ao copiar', 'err'); });
     };
     var btnPDF = mk('button', '', ICON.print + '<span>Exportar PDF</span>');
@@ -1861,7 +2565,11 @@
     refreshBtn.innerHTML = STATE.refreshPaused ? ICON.play : ICON.pause;
     refreshBtn.title = STATE.refreshPaused ? 'Retomar' : 'Pausar';
   }
-  function updateCountdown() {
+function updateCountdown() {
+    if (STATE.fetching || STATE.refreshLockedByFetch) {
+      // doFetch já cuida do label — não sobrescreve
+      return;
+    }
     if (STATE.refreshPaused) {
       refreshLabel.textContent = 'Pausado';
       refreshLabel.style.color = T.warn;
@@ -1887,15 +2595,17 @@
   }
   function scheduleNextRefresh() { STATE.nextRefreshAt = Date.now() + STATE.refreshMs; }
 
-  function startRefreshTimer() {
+ function startRefreshTimer() {
     if (APP.timers.refresh) clearInterval(APP.timers.refresh);
     if (APP.timers.countdown) clearInterval(APP.timers.countdown);
     scheduleNextRefresh();
     APP.timers.refresh = setInterval(function () {
       if (STATE.refreshPaused) return;
+      if (STATE.refreshLockedByFetch) return; // <- pausa enquanto fetch ativo
+      if (STATE.fetching) return;             // <- redundância de segurança
       if (Date.now() >= STATE.nextRefreshAt) {
         doFetch(true);
-        scheduleNextRefresh();
+        // NÃO reagenda aqui — quem reagenda é o próprio doFetch ao terminar
       }
     }, 1000);
     APP.timers.countdown = setInterval(function () {
@@ -1922,11 +2632,15 @@
   function getMockData() {
     var carriers = ['LogExpress', 'RotaSul', 'TransRJ', 'CargoFast'];
     var clusters = ['Zona Sul', 'Zona Norte', 'Zona Oeste', 'Centro', 'Baixada'];
-    var motivos = ['Endereço não localizado', 'Cliente ausente', 'Recusou', 'Avaria', 'Sem acesso'];
+    var motivos = ['Endereço não localizado', 'Cliente ausente', 'Recusou', 'Avaria',
+                   'Sem acesso', 'Não está na agência'];
     var nomes = ['João Silva', 'Maria Santos', 'Carlos Lima', 'Ana Costa',
                  'Pedro Souza', 'Lucas Pereira', 'Rafael Alves', 'Bruno Dias',
                  'Felipe Rocha', 'Diego Martins', 'Thiago Barbosa', 'Marcelo Nunes'];
     var statuses = ['FINISHED', 'IN_PROGRESS', 'IN_PROGRESS', 'IN_PROGRESS', 'FINISHED'];
+    // Mock simples — dados reais virão do monitoramento
+    var ciclos = ['CHP', 'AM1', 'PM1', 'SD'];
+    var tipos = ['Entrega', 'Mista', 'Coleta'];
     var routes = [];
     for (var i = 1; i <= 22; i++) {
       var total = 30 + Math.floor(Math.random() * 80);
@@ -1962,28 +2676,48 @@
           time: pad(14 + Math.floor(Math.random() * 5)) + ':' + pad(Math.floor(Math.random() * 60))
         });
       }
+      var statusRaw = statuses[i % statuses.length];
       routes.push({
         routeId: 'R-' + STATE.ssc + '-' + pad(i, 3),
         driver: driver, carrier: carrier, cluster: cluster,
         agencia: 'AG-' + carrier.slice(0, 3).toUpperCase(),
+        ciclo: ciclos[i % ciclos.length],
+        tipo: tipos[i % tipos.length],
+        status: statusRaw === 'FINISHED' ? 'Encerradas' : 'Abertas',  
         totalPkg: total, delivered: delivered,
         failed: failedN, pnr: pnrN,
-        status: statuses[i % statuses.length],
         failures: failures, pnrList: pnrList, returns: returns,
         failedIds: failures.map(function (x) { return x.packageId; }),
-        pnrIds: pnrList.map(function (x) { return x.packageId; })
+        pnrIds: pnrList.map(function (x) { return x.packageId; }),
+        comerciais: Math.floor(Math.random() * 15)
       });
     }
     return routes;
   }
 
   function doFetch(silent) {
+    // === TRAVA DE REENTRÂNCIA: bloqueia chamadas concorrentes ===
+    if (STATE.fetching) {
+      if (!silent) toast('Já existe uma atualização em andamento...', 'warn');
+      return Promise.resolve();
+    }
+    STATE.fetching = true;
     STATE.loading = true;
-    if (!silent) {
-      try { refreshIcon.firstChild.classList.add('mlm_spin'); } catch (e) {}
+
+    // === PAUSA o auto-refresh enquanto este fetch roda ===
+    STATE.refreshLockedByFetch = true;
+
+    // === Só limpa a tela no PRIMEIRO carregamento (quando não há dados ainda) ===
+    var isFirstLoad = !STATE.routes || STATE.routes.length === 0;
+    if (!silent && isFirstLoad) {
       content.innerHTML = '';
       renderSkeleton();
     }
+    try { refreshIcon.firstChild.classList.add('mlm_spin'); } catch (e) {}
+    // Indicador visual de "atualizando" sem destruir o painel
+    refreshLabel.textContent = 'Atualizando...';
+    refreshLabel.style.color = T.brand2;
+
     var startedAt = Date.now();
     var promise;
     if (USE_MOCK) {
@@ -2001,28 +2735,44 @@
         return resp.json();
       });
     }
+
     return promise.then(function (routes) {
-      STATE.routes = routes || [];
-      STATE.lastFetch = Date.now();
+      // === GUARDA: só troca o snapshot se veio array válido ===
+      if (Array.isArray(routes)) {
+        STATE.routes = routes;
+        STATE.lastFetch = Date.now();
+      } else {
+        console.warn('[MLM] Resposta inválida — mantendo snapshot anterior');
+      }
       STATE.loading = false;
+      STATE.fetching = false;
+      STATE.refreshLockedByFetch = false;
       try { refreshIcon.firstChild.classList.remove('mlm_spin'); } catch (e) {}
       renderKPIs();
       renderActiveTab();
       updateLastUpdate();
+      scheduleNextRefresh(); // reagenda só DEPOIS que terminou
       if (!silent) {
-        toast('Dados carregados (' + routes.length + ' rotas · ' +
+        toast('Dados carregados (' + (STATE.routes.length) + ' rotas · ' +
               (Date.now() - startedAt) + 'ms)', 'ok');
       }
     }).catch(function (err) {
       STATE.loading = false;
+      STATE.fetching = false;
+      STATE.refreshLockedByFetch = false;
       try { refreshIcon.firstChild.classList.remove('mlm_spin'); } catch (e) {}
-      toast('Erro ao buscar dados: ' + err.message, 'err');
-      content.innerHTML = '';
-      content.appendChild(mk('div',
-        'text-align:center;padding:40px 20px;color:' + T.err + ';font-size:13px',
-        '⚠ Erro ao carregar dados.<br>' +
-        '<span style="color:' + T.muted + ';font-size:11px;font-family:' + T.fMono + '">' +
-        escapeHTML(String(err.message || err)) + '</span>'));
+      // NÃO limpa a tela — mantém o último snapshot bom
+      toast('Erro ao buscar dados: ' + err.message + ' (mantendo últimos dados)', 'err');
+      scheduleNextRefresh();
+      // Só mostra tela de erro se realmente não há nada pra mostrar
+      if (!STATE.routes || STATE.routes.length === 0) {
+        content.innerHTML = '';
+        content.appendChild(mk('div',
+          'text-align:center;padding:40px 20px;color:' + T.err + ';font-size:13px',
+          '⚠ Erro ao carregar dados.<br>' +
+          '<span style="color:' + T.muted + ';font-size:11px;font-family:' + T.fMono + '">' +
+          escapeHTML(String(err.message || err)) + '</span>'));
+      }
     });
   }
 
@@ -2042,6 +2792,12 @@
   on(btnFechamento, 'click', function () { openFechamentoModal(); });
   on(btnAgenda, 'click', function () { openAgendaModal(); });
 
+  // Fechar dropdowns ao clicar fora
+  on(document, 'click', function () {
+    document.querySelectorAll('[data-mlm-dropdown="1"]').forEach(function (d) {
+      d.style.display = 'none';
+    });
+  });
   document.body.appendChild(panel);
   renderKPIs();
   renderActiveTab();
