@@ -225,6 +225,13 @@
       origem: new Set(),
       placa: '',
       rank: 'none'
+    },
+    // Controle de UI para preservar interação durante refresh
+    ui: {
+      openDropdown: null,        // qual dropdown está aberto
+      dropdownScrollTop: 0,      // scroll dentro do dropdown
+      contentScrollTop: 0,       // scroll da área de conteúdo
+      searchValue: ''            // valor do campo de busca no dropdown
     }
   };
   APP.STATE = STATE; APP.render = function(){ if(typeof renderKPIs==='function')renderKPIs(); if(typeof renderActiveTab==='function')renderActiveTab(); };
@@ -592,9 +599,21 @@
   });
   panel.appendChild(tabsBar);
 
+  // Container principal: filtros (fixos) + área de dados (atualizada por refresh)
   var content = mk('div',
-    'flex:1;overflow-y:auto;padding:16px 18px;background:rgba(10,14,26,.4);min-height:300px');
+    'flex:1;overflow-y:auto;background:rgba(10,14,26,.4);min-height:300px;' +
+    'display:flex;flex-direction:column');
   panel.appendChild(content);
+
+  // Barra de filtros — NUNCA é destruída no auto-refresh
+  var filtersContainer = mk('div',
+    'padding:16px 18px 0 18px;flex-shrink:0;position:sticky;top:0;' +
+    'background:rgba(10,14,26,.95);backdrop-filter:blur(10px);z-index:10');
+  content.appendChild(filtersContainer);
+
+  // Área de dados — esta SIM é atualizada
+  var dataArea = mk('div', 'padding:8px 18px 16px 18px;flex:1');
+  content.appendChild(dataArea);
 
   var footer = mk('div',
     'padding:10px 18px;background:' + T.surface + ';border-top:1px solid ' + T.border +
@@ -617,13 +636,30 @@
     renderActiveTab();
   }
 
+  // Render COMPLETO: usado quando troca de aba ou primeira vez
   function renderActiveTab() {
-    content.innerHTML = '';
     if (STATE.loading && (!STATE.routes || STATE.routes.length === 0)) {
-      renderSkeleton(); return;
+      filtersContainer.innerHTML = '';
+      dataArea.innerHTML = '';
+      renderSkeleton();
+      return;
     }
-    // Barra de filtros global no topo de toda aba
-    content.appendChild(renderGlobalFiltersBar());
+    renderFiltersOnly();
+    renderDataOnly();
+  }
+
+  // Render só dos filtros (raramente chamado, só ao trocar de aba)
+  function renderFiltersOnly() {
+    filtersContainer.innerHTML = '';
+    filtersContainer.appendChild(renderGlobalFiltersBar());
+  }
+
+  // Render só dos dados — chamado pelo auto-refresh
+  // NÃO MEXE NOS FILTROS, preserva dropdowns abertos
+  function renderDataOnly() {
+    // Salva scroll antes de redesenhar
+    STATE.ui.contentScrollTop = content.scrollTop;
+    dataArea.innerHTML = '';
     switch (STATE.tab) {
       case 'ROTAS':      renderRotas();      break;
       case 'OFENSORAS':  renderOfensoras();  break;
@@ -633,6 +669,38 @@
       case 'AGENCIAS':   renderAgencias();   break;
       case 'DEVOLUCOES': renderDevolucoes(); break;
     }
+    // Restaura scroll
+    requestAnimationFrame(function () {
+      content.scrollTop = STATE.ui.contentScrollTop;
+    });
+  }
+  // Mostra banner discreto quando há dados novos mas dropdown está aberto
+  function showRefreshPending() {
+    var existing = document.getElementById('mlm_srj3_refresh_pending');
+    if (existing) return;
+    var banner = mk('div',
+      'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);' +
+      'background:' + T.grad + ';color:#fff;padding:10px 18px;border-radius:24px;' +
+      'box-shadow:' + T.shadow + ';font-size:12px;font-weight:600;cursor:pointer;' +
+      'z-index:' + (T.z + 20) + ';display:flex;align-items:center;gap:8px;' +
+      'animation:mlm_slideUp .25s ease-out;font-family:' + T.fUI,
+      '<span>↻</span><span>Novos dados disponíveis · clique para atualizar</span>');
+    banner.id = 'mlm_srj3_refresh_pending';
+    banner.onclick = function () {
+      // Fecha todos dropdowns e atualiza
+      document.querySelectorAll('[data-mlm-dropdown="1"]').forEach(function (d) {
+        d.style.display = 'none';
+      });
+      STATE.ui.openDropdown = null;
+      banner.parentNode && banner.parentNode.removeChild(banner);
+      renderDataOnly();
+    };
+    document.body.appendChild(banner);
+  }
+
+  function clearRefreshPending() {
+    var b = document.getElementById('mlm_srj3_refresh_pending');
+    if (b && b.parentNode) b.parentNode.removeChild(b);
   }
 
   function renderSkeleton() {
@@ -704,26 +772,17 @@
   }
 // Atualiza conteúdo mantendo o dropdown atual aberto
   function refreshActiveTabKeepDropdown(activeKey) {
-    // Atualiza só o texto do botão e re-renderiza o conteúdo das abas
     renderKPIs();
-    // Re-renderiza só o conteúdo (sem destruir barra de filtros)
-    var oldFiltersBar = content.querySelector('[data-mlm-filtersbar="1"]');
-    var newBar = renderGlobalFiltersBar();
-    content.innerHTML = '';
-    content.appendChild(newBar);
-    switch (STATE.tab) {
-      case 'ROTAS':      renderRotas();      break;
-      case 'OFENSORAS':  renderOfensoras();  break;
-      case 'INSUCESSOS': renderInsucessos(); break;
-      case 'MOTORISTAS': renderMotoristas(); break;
-      case 'PNR':        renderPNR();        break;
-      case 'AGENCIAS':   renderAgencias();   break;
-      case 'DEVOLUCOES': renderDevolucoes(); break;
-    }
+    // Re-renderiza filtros (pra atualizar contagem nos botões) E dados
+    renderFiltersOnly();
+    renderDataOnly();
     // Reabre o dropdown que estava ativo
     setTimeout(function () {
-      var btns = content.querySelectorAll('[data-mlm-filter-key="' + activeKey + '"]');
-      if (btns.length > 0) btns[0].click();
+      var btns = filtersContainer.querySelectorAll('[data-mlm-filter-key="' + activeKey + '"]');
+      if (btns.length > 0) {
+        btns[0].click();
+        STATE.ui.openDropdown = activeKey;
+      }
     }, 0);
   }
 
@@ -853,7 +912,17 @@
         document.querySelectorAll('[data-mlm-dropdown="1"]').forEach(function (d) {
           if (d !== dropdown) d.style.display = 'none';
         });
-        dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+        var willOpen = dropdown.style.display !== 'block';
+        dropdown.style.display = willOpen ? 'block' : 'none';
+        STATE.ui.openDropdown = willOpen ? key : null;
+        // Se fechou o dropdown e tem dados pendentes, atualiza
+        if (!willOpen) {
+          var pending = document.getElementById('mlm_srj3_refresh_pending');
+          if (pending) {
+            clearRefreshPending();
+            renderDataOnly();
+          }
+        }
       };
       dropdown.dataset.mlmDropdown = '1';
 
@@ -2940,7 +3009,12 @@ function updateCountdown() {
       STATE.refreshLockedByFetch = false;
       try { refreshIcon.firstChild.classList.remove('mlm_spin'); } catch (e) {}
       renderKPIs();
-      renderActiveTab();
+      // Se tem dropdown aberto, NÃO redesenha — só marca pendente
+      if (STATE.ui.openDropdown) {
+        showRefreshPending();
+      } else {
+        renderDataOnly();   // só dados, filtros ficam intocados
+      }
       updateLastUpdate();
       scheduleNextRefresh();
       if (!silent) {
@@ -2985,9 +3059,19 @@ function updateCountdown() {
 
   // Fechar dropdowns ao clicar fora
   on(document, 'click', function () {
+    var hadOpen = !!STATE.ui.openDropdown;
     document.querySelectorAll('[data-mlm-dropdown="1"]').forEach(function (d) {
       d.style.display = 'none';
     });
+    STATE.ui.openDropdown = null;
+    // Se fechou e tinha refresh pendente, atualiza agora
+    if (hadOpen) {
+      var pending = document.getElementById('mlm_srj3_refresh_pending');
+      if (pending) {
+        clearRefreshPending();
+        renderDataOnly();
+      }
+    }
   });
   document.body.appendChild(panel);
   renderKPIs();
