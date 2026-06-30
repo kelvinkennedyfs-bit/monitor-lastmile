@@ -627,13 +627,15 @@
     'Arraste o header para mover'));
   panel.appendChild(footer);
 
-  function switchTab(tabId) {
-    STATE.tab = tabId; Prefs.save();
-    $$('button[data-tab]', tabsBar).forEach(function (b) {
-      if (b.dataset.tab === tabId) b.classList.add('mlm_tab_active');
-      else b.classList.remove('mlm_tab_active');
-    });
-    renderActiveTab();
+  function renderActiveTab() {
+    if (STATE.loading && (!STATE.routes || STATE.routes.length === 0)) {
+      filtersContainer.innerHTML = '';
+      dataArea.innerHTML = '';
+      renderSkeleton();
+      return;
+    }
+    renderFiltersOnly();
+    renderDataOnly();
   }
 
   // Render COMPLETO: usado quando troca de aba ou primeira vez
@@ -713,7 +715,7 @@
         '<div class="mlm_skeleton" style="height:100%;width:100%"></div>'));
       grid.appendChild(row);
     }
-    content.appendChild(grid);
+    dataArea.appendChild(grid);
   }
 
   function setFooterCount(shown, total) {
@@ -2826,24 +2828,42 @@ function updateCountdown() {
 
   // Normaliza status do ML para o padrão do painel
   function parseStatus(substatus, finalDate, status) {
-    // Tenta vários campos: status, substatus
-    var raw = substatus || status || '';
-    var s = String(raw).toLowerCase().trim();
+    var st = String(status || '').toLowerCase().trim();
+    var sub = String(substatus || '').toLowerCase().trim();
 
-    // ENCERRADAS = rotas finalizadas (CLOSED, CLOSE, FINISHED)
-    if (s === 'close' || s === 'closed' || s === 'finished' ||
-        s === 'completed' || s === 'finalized') return 'Encerradas';
-
-    // A CAMINHO DO DESTINO (PLANNED - ainda não saiu pra rota)
-    if (s === 'planned' || s === 'plan' || s === 'to_be_started') return 'A caminho do destino';
-
-    // ABERTAS = em andamento (ACTIVE, RETURN_TO_STATION, STARTED, IN_PROGRESS)
-    if (s === 'active' || s === 'return_to_station' || s === 'started' ||
-        s === 'in_progress' || s === 'running' || s === 'on_route' ||
-        s === 'returning') return 'Abertas';
-
-    // Fallback: se tem finalDate > 0 = Encerrada, senão = Aberta
+    // ============================================================
+    // ENCERRADAS = rota finalizada
+    // ============================================================
+    if (st === 'closed' || st === 'close' || st === 'finished' ||
+        st === 'completed' || st === 'finalized' || st === 'ended') {
+      return 'Encerradas';
+    }
     if (finalDate && finalDate > 0) return 'Encerradas';
+
+    // ============================================================
+    // A CAMINHO DO DESTINO (NÃO contabiliza)
+    // status=planned  OU  substatus=on_way_destination_facility
+    // ============================================================
+    if (st === 'planned' || st === 'plan' || st === 'to_be_started' || st === 'pending') {
+      return 'A caminho do destino';
+    }
+    if (sub === 'on_way_destination_facility' || sub === 'on_way_to_destination' ||
+        sub === 'going_to_destination' || sub === 'in_transit') {
+      return 'A caminho do destino';
+    }
+
+    // ============================================================
+    // ABERTAS = rota em andamento (saiu pra entrega)
+    // ============================================================
+    if (st === 'active' || st === 'started' || st === 'in_progress' ||
+        st === 'running' || st === 'on_route' || st === 'on_going') {
+      return 'Abertas';
+    }
+    if (sub === 'return_to_station' || sub === 'returning' || sub === 'on_route' ||
+        sub === 'delivering' || sub === 'started' || sub === 'active') {
+      return 'Abertas';
+    }
+
     return 'Abertas';
   }
   // Converte uma rota do JSON do ML pro formato interno do painel
