@@ -2876,52 +2876,72 @@ function updateCountdown() {
   // Converte uma rota do JSON do ML pro formato interno do painel
   function mapRoute(r) {
     var c = r.counters || {};
-    // DEBUG: loga primeiras 3 rotas pra confirmar campos
+
+    // DEBUG: loga primeiras 3 rotas
     if (window.__MLM_DEBUG_COUNT === undefined) window.__MLM_DEBUG_COUNT = 0;
     if (window.__MLM_DEBUG_COUNT < 3) {
       console.log('[MLM debug rota cruda]', {
         id: r.id, status: r.status, substatus: r.substatus,
-        facilityId: r.facilityId, finalDate: r.finalDate,
-        counters: r.counters
+        cluster: r.cluster, plate: r.plate, vehicle: r.vehicle,
+        counters: r.counters, driver: r.driver
       });
       window.__MLM_DEBUG_COUNT++;
     }
+
+    var statusMapeado = parseStatus(r.substatus, r.finalDate, r.status);
+
     return {
-      routeId: String(r.id || ''),
-      driver:  (r.driver && r.driver.driverName) || '—',
+      routeId:  String(r.id || ''),
+      shippingId: r.shippingId || r.id || '',
+      driver:   (r.driver && r.driver.driverName) || '—',
       driverId: r.driver && r.driver.driverId,
       driverClaims: r.driver && r.driver.driverClaims,
       driverLoyalty: r.driver && r.driver.loyalty && r.driver.loyalty.name,
-      carrier: r.carrier || '—',
+      carrier:  r.carrier || '—',
       carrierId: r.carrierId,
-      cluster: r.cluster || '',
-      ciclo: parseCiclo(r.cluster),
-      tipo: r.deliveryType || r.type || '',
-      modal: r.deliveryType || '',
-      origem: r.facilityId || r.facility_id || r.origin || r.originFacility || '',
-      tipoOrigem: r.facilityType || r.facility_type || '',
-      destinoId: r.destinationFacility && r.destinationFacility.destinationFacilityId,
-      destinoTipo: r.destinationFacility && r.destinationFacility.destinationFacilityType,
-      agencia: r.facilityId || '',
-      placa: r.plate || r.vehicle || '',
-      status: parseStatus(r.substatus, r.finalDate, r.status),
-      substatus: r.substatus || r.status || '',
-      totalPkg:  c.total        || 0,
-      delivered: c.delivered    || 0,
-      failed:    c.notDelivered || 0,
-      pnr:       0,  // PNR não vem nesse endpoint, fica 0 por enquanto
-      pendentes: c.pending      || 0,
-      comerciais: c.business    || 0,
+      cluster:  r.cluster || '',
+      ciclo:    parseCiclo(r.cluster),
+      cycle:    parseCiclo(r.cluster),
+      tipo:     r.type || r.deliveryType || 'last_mile',
+      modal:    r.vehicle || r.deliveryType || '',
+      vehicle:  r.vehicle || '',
+      origem:   r.facilityId || r.origin || '',
+      agencia:  r.facilityId || '',
+      placa:    r.plate || '',
+      plate:    r.plate || '',
+      distance: r.distance || 0,
+      promise:  r.promise || '',
+      hasAlert: !!r.hasAlert,
+      isLineHaul: !!r.isLineHaul,
+      warningsQuantity: r.warningsQuantity || 0,
+      progressPercent: r.progressPercent || '0',
+
+      // STATUS MAPEADO (importante!)
+      status:    statusMapeado,
+      substatus: r.substatus || '',
+      _rawStatus: r.status,   // guarda o original pra debug
+
+      // CONTADORES
+      totalPkg:    c.total        || 0,
+      delivered:   c.delivered    || 0,
+      failed:      c.notDelivered || 0,
+      pnr:         c.pnr          || 0,
+      pending:     c.pending      || 0,
+      pendentes:   c.pending      || 0,
+      comerciais:  c.business     || 0,
       residenciais: c.residential || 0,
-      bags: c.totalBags || 0,
-      initDate: r.initDate,
+      bags:        c.totalBags    || 0,
+
+      // Datas
+      initDate:  r.initDate,
       finalDate: r.finalDate,
-      // Estes virão de outro endpoint (detalhe da rota) se quisermos depois:
-      failures: [],
-      pnrList: [],
-      returns: [],
-      failedIds: [],
-      pnrIds: []
+
+      // Detalhes (virão de outro endpoint depois)
+      failures: [], pnrList: [], returns: [],
+      failedIds: [], pnrIds: [],
+
+      // Raw pra debug
+      _raw: r
     };
   }
 
@@ -3036,11 +3056,11 @@ function updateCountdown() {
       STATE.refreshLockedByFetch = false;
       try { refreshIcon.firstChild.classList.remove('mlm_spin'); } catch (e) {}
       renderKPIs();
-      // Se tem dropdown aberto, NÃO redesenha — só marca pendente
+      // SEMPRE re-renderiza os dados.
+      // Se tem dropdown aberto, mostra banner DEPOIS pra usuário saber que houve update.
+      renderDataOnly();
       if (STATE.ui.openDropdown) {
         showRefreshPending();
-      } else {
-        renderDataOnly();   // só dados, filtros ficam intocados
       }
       updateLastUpdate();
       scheduleNextRefresh();
