@@ -553,10 +553,10 @@
     });
     function set(id, txt, sub, color, pulse) {
       var v = document.getElementById('mlm_srj3_kpi_' + id + '_val');
-      var s = document.getElementById('mlm_srj3_kpi_' + id + '_sub');
+      var subEl = document.getElementById('mlm_srj3_kpi_' + id + '_sub');
       var c = document.getElementById('mlm_srj3_kpi_' + id);
       if (v) { v.textContent = txt; if (color) v.style.color = color; }
-      if (s) s.textContent = sub || '\u00A0';
+      if (subEl) subEl.textContent = sub || '\u00A0';
       if (c) c.classList.toggle('mlm_kpi_pulse', !!pulse);
     }
     set('total', fmt(total), r.length + ' rotas' + (s.foraDS > 0 ? ' · ' + s.foraDS + ' fora DS' : ''));
@@ -627,15 +627,22 @@
     'Arraste o header para mover'));
   panel.appendChild(footer);
 
-  function renderActiveTab() {
-    if (STATE.loading && (!STATE.routes || STATE.routes.length === 0)) {
-      filtersContainer.innerHTML = '';
-      dataArea.innerHTML = '';
-      renderSkeleton();
-      return;
-    }
-    renderFiltersOnly();
-    renderDataOnly();
+ function switchTab(tabId) {
+    STATE.tab = tabId;
+    Prefs.save();
+    // Atualiza visual dos botões de aba
+    $$('button[data-tab]', tabsBar).forEach(function (b) {
+      if (b.dataset.tab === tabId) b.classList.add('mlm_tab_active');
+      else b.classList.remove('mlm_tab_active');
+    });
+    // Fecha qualquer dropdown aberto
+    document.querySelectorAll('[data-mlm-dropdown="1"]').forEach(function (d) {
+      d.style.display = 'none';
+    });
+    STATE.ui.openDropdown = null;
+    clearRefreshPending();
+    // Re-renderiza filtros + dados da nova aba
+    renderActiveTab();
   }
 
   // Render COMPLETO: usado quando troca de aba ou primeira vez
@@ -1137,10 +1144,10 @@
       stats.dsPct >= 95 ? T.ok : stats.dsPct >= 90 ? T.warn : T.err));
     summaryBar.appendChild(miniStat('Pendentes',
       fmt(Math.max(0, stats.total - stats.delivered - stats.failed - stats.foraDS)), T.warn));
-    content.appendChild(summaryBar);
+    dataArea.appendChild(summaryBar);
 
     // === Export bar ===
-    content.appendChild(exportBar('ROTAS',
+    dataArea.appendChild(exportBar('ROTAS',
       function () {
         return routes.map(function (r) {
           var pendentes = Math.max(0, (r.totalPkg || 0) - (r.delivered || 0) - (r.failed || 0));
@@ -1167,7 +1174,7 @@
 
     // === Estado vazio ===
     if (routes.length === 0) {
-      content.appendChild(mk('div',
+      dataArea.appendChild(mk('div',
         'text-align:center;padding:40px;color:' + T.muted + ';font-style:italic',
         'Nenhuma rota encontrada com os filtros aplicados.'));
       setFooterCount(0, totalRoutes);
@@ -1265,7 +1272,7 @@
 
       grid.appendChild(card);
     });
-    content.appendChild(grid);
+    dataArea.appendChild(grid);
     setFooterCount(routes.length, totalRoutes);
   }
   
@@ -1311,7 +1318,7 @@
     var top5 = motivosArr.slice(0, 5);
     var totalMotivos = motivosArr.reduce(function (s, m) { return s + m.qtd; }, 0) || 1;
 
-    content.appendChild(mk('div',
+    dataArea.appendChild(mk('div',
       'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:10px',
       'Rotas Ofensoras <span style="color:' + T.muted + ';font-size:11px">(' +
       filtered.length + ' de ' + ofensoras.length + ')</span>'));
@@ -1354,20 +1361,20 @@
       });
       topTbl.appendChild(tbody);
       topCard.appendChild(topTbl);
-      content.appendChild(topCard);
+      dataArea.appendChild(topCard);
     }
 
     // === FILTROS LOCAIS DA ABA ===
-    if (carriers.length > 0) content.appendChild(chipFilter({
+    if (carriers.length > 0) dataArea.appendChild(chipFilter({
       label: 'Carrier', values: carriers, selectedSet: f.carrier,
       onChange: function () { renderActiveTab(); }
     }));
-    if (clusters.length > 0) content.appendChild(chipFilter({
+    if (clusters.length > 0) dataArea.appendChild(chipFilter({
       label: 'Cluster', values: clusters, selectedSet: f.cluster,
       onChange: function () { renderActiveTab(); }
     }));
 
-    content.appendChild(exportBar('OFENSORAS',
+    dataArea.appendChild(exportBar('OFENSORAS',
       function () {
         return filtered.map(function (r) {
           return {
@@ -1386,7 +1393,7 @@
       ], 'Rotas Ofensoras — ' + STATE.ssc + ' — ' + STATE.date));
 
     // === RANKING DE OFENSORES ===
-    content.appendChild(mk('div',
+    dataArea.appendChild(mk('div',
       'font-size:12px;font-weight:600;color:' + T.textHi + ';margin:14px 0 8px 0',
       '📊 Ranking de Ofensores (' + filtered.length + ')'));
 
@@ -1429,7 +1436,7 @@
       }
       grid.appendChild(card);
     });
-    content.appendChild(grid);
+    dataArea.appendChild(grid);
     setFooterCount(filtered.length, ofensoras.length);
   }
 
@@ -1445,13 +1452,13 @@
     var totalInsucessos = 0;
     routes.forEach(function (r) { totalInsucessos += r.failed || 0; });
 
-    content.appendChild(mk('div',
+    dataArea.appendChild(mk('div',
       'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:10px',
       'Insucessos <span style="color:' + T.muted + ';font-size:11px">(' +
       fmt(totalInsucessos) + ' pacotes em ' + routes.length + ' rotas)</span>'));
 
     if (routes.length === 0) {
-      content.appendChild(mk('div',
+      dataArea.appendChild(mk('div',
         'text-align:center;padding:40px;color:' + T.muted + ';font-style:italic',
         'Nenhum insucesso registrado com os filtros aplicados.'));
       setFooterCount(0, 0);
@@ -1503,7 +1510,7 @@
     });
     tbl.appendChild(tbody);
     topCard.appendChild(tbl);
-    content.appendChild(topCard);
+    dataArea.appendChild(topCard);
 
     // === AGRUPAMENTO POR CARRIER ===
     var byCarrier = {};
@@ -1551,10 +1558,10 @@
     });
     tbl2.appendChild(tbody2);
     carrierCard.appendChild(tbl2);
-    content.appendChild(carrierCard);
+    dataArea.appendChild(carrierCard);
 
     // === EXPORT ===
-    content.appendChild(exportBar('INSUCESSOS',
+    dataArea.appendChild(exportBar('INSUCESSOS',
       function () {
         return routes.map(function (r) {
           return {
@@ -1572,7 +1579,7 @@
       ], 'Insucessos — ' + STATE.ssc + ' — ' + STATE.date));
 
     // === LISTA COMPLETA DE ROTAS COM INSUCESSO ===
-    content.appendChild(mk('div',
+    dataArea.appendChild(mk('div',
       'font-size:12px;font-weight:600;color:' + T.textHi + ';margin:14px 0 8px 0',
       '📋 Todas as rotas com insucesso (' + routes.length + ')'));
 
@@ -1597,7 +1604,7 @@
         fmt(r.failed) + ' insuc.'));
       grid.appendChild(card);
     });
-    content.appendChild(grid);
+    dataArea.appendChild(grid);
     setFooterCount(routes.length, allRoutes.length);
   }
 
@@ -1650,14 +1657,14 @@
     hdr.appendChild(mk('span',
       'font-size:10px;color:' + T.muted + ';font-family:' + T.fMono,
       'Agenda: ' + Agenda.count() + ' motoristas · ' + Agenda.lastImport()));
-    content.appendChild(hdr);
+    dataArea.appendChild(hdr);
 
-    if (carriers.length > 0) content.appendChild(chipFilter({
+    if (carriers.length > 0) dataArea.appendChild(chipFilter({
       label: 'Carrier', values: carriers, selectedSet: f.carrier,
       onChange: function () { renderActiveTab(); }
     }));
 
-    content.appendChild(exportBar('MOTORISTAS',
+    dataArea.appendChild(exportBar('MOTORISTAS',
       function () {
         return filtered.map(function (d) {
           return {
@@ -1706,7 +1713,7 @@
         format: function (v) { return v.toFixed(1) + '%'; },
         color: function (v) { return v >= 95 ? T.ok : v >= 90 ? T.warn : T.err; } }
     ]);
-    content.appendChild(tbl);
+    dataArea.appendChild(tbl);
     setFooterCount(filtered.length, drivers.length);
   }
 
@@ -1735,17 +1742,17 @@
       return true;
     });
 
-    content.appendChild(mk('div',
+    dataArea.appendChild(mk('div',
       'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:10px',
       'PNR — Pacotes Não Retirados <span style="color:' + T.muted + ';font-size:11px">(' +
       filtered.length + ' de ' + pkgs.length + ')</span>'));
 
-    if (carriers.length > 0) content.appendChild(chipFilter({
+    if (carriers.length > 0) dataArea.appendChild(chipFilter({
       label: 'Carrier', values: carriers, selectedSet: f.carrier,
       onChange: function () { renderActiveTab(); }
     }));
 
-    content.appendChild(exportBar('PNR',
+    dataArea.appendChild(exportBar('PNR',
       function () { return filtered; },
       [
         { key: 'packageId', label: 'Pacote' }, { key: 'rota', label: 'Rota' },
@@ -1794,7 +1801,7 @@
         }));
       grid.appendChild(card);
     });
-    content.appendChild(grid);
+    dataArea.appendChild(grid);
     setFooterCount(filtered.length, pkgs.length);
   }
 
@@ -1829,7 +1836,7 @@
     else if (f.sort === 'lessP') filtered.sort(function (a, b) { return a.totalPkg - b.totalPkg; });
     else filtered.sort(function (a, b) { return b.failed - a.failed; });
 
-    content.appendChild(mk('div',
+    dataArea.appendChild(mk('div',
       'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:10px',
       'Agências <span style="color:' + T.muted + ';font-size:11px">(' +
       filtered.length + ' de ' + ags.length + ')</span>'));
@@ -1849,9 +1856,9 @@
       btn.onclick = function () { f.sort = s.id; renderActiveTab(); };
       segWrap.appendChild(btn);
     });
-    content.appendChild(segWrap);
+    dataArea.appendChild(segWrap);
 
-    content.appendChild(exportBar('AGENCIAS',
+    dataArea.appendChild(exportBar('AGENCIAS',
       function () {
         return filtered.map(function (a) {
           return {
@@ -1868,7 +1875,7 @@
         { key: 'pnr', label: 'PNR' }, { key: 'ds', label: 'DS%' }
       ], 'Agências — ' + STATE.ssc + ' — ' + STATE.date));
 
-    content.appendChild(table(filtered, [
+    dataArea.appendChild(table(filtered, [
       { key: 'agencia', label: 'Agência',
         format: function (v) { return '<span style="color:' + T.textHi + ';font-weight:600">' + escapeHTML(v) + '</span>'; } },
       { key: 'routes', label: 'Rotas', mono: true, width: '70px' },
@@ -1914,7 +1921,7 @@
       return (a.carrier || '').localeCompare(b.carrier || '');
     });
 
-    content.appendChild(mk('div',
+    dataArea.appendChild(mk('div',
       'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:10px',
       'Devoluções <span style="color:' + T.muted + ';font-size:11px">(' +
       filtered.length + ' de ' + pkgs.length + ')</span>'));
@@ -1933,9 +1940,9 @@
       btn.onclick = function () { f.sort = s.id; renderActiveTab(); };
       segWrap.appendChild(btn);
     });
-    content.appendChild(segWrap);
+    dataArea.appendChild(segWrap);
 
-    content.appendChild(exportBar('DEVOLUCOES',
+    dataArea.appendChild(exportBar('DEVOLUCOES',
       function () { return filtered; },
       [
         { key: 'packageId', label: 'Pacote' }, { key: 'rota', label: 'Rota' },
@@ -1944,7 +1951,7 @@
         { key: 'hora', label: 'Hora' }
       ], 'Devoluções — ' + STATE.ssc + ' — ' + STATE.date));
 
-    content.appendChild(table(filtered, [
+    dataArea.appendChild(table(filtered, [
       { key: 'packageId', label: 'Pacote', mono: true,
         color: function () { return T.brand2; } },
       { key: 'rota', label: 'Rota', mono: true,
@@ -2996,7 +3003,7 @@ function updateCountdown() {
 
     var isFirstLoad = !STATE.routes || STATE.routes.length === 0;
     if (!silent && isFirstLoad) {
-      content.innerHTML = '';
+      dataArea.innerHTML = '';
       renderSkeleton();
     }
     try { refreshIcon.firstChild.classList.add('mlm_spin'); } catch (e) {}
@@ -3049,8 +3056,8 @@ function updateCountdown() {
       toast('Erro ao buscar dados: ' + err.message + ' (mantendo últimos dados)', 'err');
       scheduleNextRefresh();
       if (!STATE.routes || STATE.routes.length === 0) {
-        content.innerHTML = '';
-        content.appendChild(mk('div',
+        dataArea.innerHTML = '';
+        dataArea.appendChild(mk('div',
           'text-align:center;padding:40px 20px;color:' + T.err + ';font-size:13px',
           '⚠ Erro ao carregar dados.<br>' +
           '<span style="color:' + T.muted + ';font-size:11px;font-family:' + T.fMono + '">' +
