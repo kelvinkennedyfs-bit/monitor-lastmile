@@ -666,19 +666,30 @@
   // Render só dos dados — chamado pelo auto-refresh
   // NÃO MEXE NOS FILTROS, preserva dropdowns abertos
   function renderDataOnly() {
-    // Salva scroll antes de redesenhar
     STATE.ui.contentScrollTop = content.scrollTop;
-    dataArea.innerHTML = '';
-    switch (STATE.tab) {
-      case 'ROTAS':      renderRotas();      break;
-      case 'OFENSORAS':  renderOfensoras();  break;
-      case 'INSUCESSOS': renderInsucessos(); break;
-      case 'MOTORISTAS': renderMotoristas(); break;
-      case 'PNR':        renderPNR();        break;
-      case 'AGENCIAS':   renderAgencias();   break;
-      case 'DEVOLUCOES': renderDevolucoes(); break;
+    try {
+      dataArea.innerHTML = '';
+      switch (STATE.tab) {
+        case 'ROTAS':      renderRotas();      break;
+        case 'OFENSORAS':  renderOfensoras();  break;
+        case 'INSUCESSOS': renderInsucessos(); break;
+        case 'MOTORISTAS': renderMotoristas(); break;
+        case 'PNR':        renderPNR();        break;
+        case 'AGENCIAS':   renderAgencias();   break;
+        case 'DEVOLUCOES': renderDevolucoes(); break;
+        default:           renderRotas();
+      }
+    } catch (err) {
+      console.error('[MLM] ERRO em renderDataOnly:', err);
+      dataArea.innerHTML = '';
+      dataArea.appendChild(mk('div',
+        'text-align:center;padding:40px 20px;color:' + T.err + ';font-size:13px',
+        '⚠ Erro ao renderizar aba <b>' + STATE.tab + '</b><br>' +
+        '<span style="color:' + T.muted + ';font-size:11px;font-family:' + T.fMono + '">' +
+        escapeHTML(String(err.message || err)) + '</span><br><br>' +
+        '<span style="color:' + T.muted + ';font-size:10px">' +
+        'Verifique o console (F12) para detalhes.</span>'));
     }
-    // Restaura scroll
     requestAnimationFrame(function () {
       content.scrollTop = STATE.ui.contentScrollTop;
     });
