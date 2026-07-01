@@ -5,31 +5,31 @@
 (function () {
   'use strict';
 
-  try {
-    if (window.__MLM_SRJ3__ && typeof window.__MLM_SRJ3__.destroy === 'function') {
-      window.__MLM_SRJ3__.destroy();
-    }
-  } catch (e) {}
+  // Se já existe uma instância anterior, destrói antes de recriar
+  if (window.__MLM_SRJ3_APP__) {
+    try { window.__MLM_SRJ3_APP__.destroy && window.__MLM_SRJ3_APP__.destroy(); } catch (e) {}
+  }
 
-  var APP = window.__MLM_SRJ3__ = {
+  var APP = window.__MLM_SRJ3_APP__ = {
     version: '2.0',
     panel: null,
-    timers: { refresh: null, countdown: null },
+    timers: {},
     listeners: [],
     destroy: function () {
       try {
-        if (this.timers.refresh)   clearInterval(this.timers.refresh);
-        if (this.timers.countdown) clearInterval(this.timers.countdown);
-        this.listeners.forEach(function (l) {
+        if (APP.timers.refresh)   clearInterval(APP.timers.refresh);
+        if (APP.timers.countdown) clearInterval(APP.timers.countdown);
+        (APP.listeners || []).forEach(function (l) {
           try { l.target.removeEventListener(l.type, l.fn, l.opts); } catch (e) {}
         });
-        this.listeners = [];
-        if (this.panel && this.panel.parentNode) this.panel.parentNode.removeChild(this.panel);
-        var st = document.getElementById('mlm_srj3_style');
-        if (st && st.parentNode) st.parentNode.removeChild(st);
-        var ts = document.getElementById('mlm_srj3_toasts');
-        if (ts && ts.parentNode) ts.parentNode.removeChild(ts);
-      } catch (e) {}
+        var pnl = document.getElementById('mlm_srj3_panel');
+        if (pnl && pnl.parentNode) pnl.parentNode.removeChild(pnl);
+        var sty = document.getElementById('mlm_srj3_style');
+        if (sty && sty.parentNode) sty.parentNode.removeChild(sty);
+        var tst = document.getElementById('mlm_srj3_toasts');
+        if (tst && tst.parentNode) tst.parentNode.removeChild(tst);
+      } catch (e) { console.warn('[MLM] Erro no destroy:', e); }
+      try { delete window.__MLM_SRJ3_APP__; } catch (e) { window.__MLM_SRJ3_APP__ = null; }
     }
   };
 
@@ -234,7 +234,16 @@
       searchValue: ''            // valor do campo de busca no dropdown
     }
   };
-  APP.STATE = STATE; APP.render = function(){ if(typeof renderKPIs==='function')renderKPIs(); if(typeof renderActiveTab==='function')renderActiveTab(); };
+  APP.STATE = STATE;
+  APP._mlmForceRender = function () {
+    if (typeof renderKPIs === 'function') renderKPIs();
+    if (typeof renderActiveTab === 'function') renderActiveTab();
+  };
+  // Mantém .render como no-op protegido pra ninguém quebrar
+  APP.render = function () {
+    // Bloqueia chamadas externas — só nosso código usa _mlmForceRender
+    console.warn('[MLM] APP.render() ignorado — use APP._mlmForceRender()');
+  };
 
   var Agenda = {
     KEY: 'mlm_srj3_agenda_v2', DATE_KEY: 'mlm_srj3_agenda_date', data: {},
@@ -663,11 +672,22 @@
     filtersContainer.appendChild(renderGlobalFiltersBar());
   }
 
-  // Render só dos dados — chamado pelo auto-refresh
-  // NÃO MEXE NOS FILTROS, preserva dropdowns abertos
+  var _renderLock = false;
+  var _renderScheduled = null;
   function renderDataOnly() {
-    // Se está no meio de um fetch E temos dados antigos na tela, NÃO redesenha ainda
-    // (evita piscar durante busca da API)
+    // Debounce: se já renderizou nos últimos 300ms, agenda pra depois
+    if (_renderLock) {
+      if (_renderScheduled) clearTimeout(_renderScheduled);
+      _renderScheduled = setTimeout(function () {
+        _renderScheduled = null;
+        renderDataOnly();
+      }, 350);
+      return;
+    }
+    _renderLock = true;
+    setTimeout(function () { _renderLock = false; }, 300);
+
+    // Se está no meio de um fetch E temos dados antigos, NÃO redesenha
     if (STATE.fetching && dataArea.children.length > 0) {
       return;
     }
@@ -3121,20 +3141,16 @@ function updateCountdown() {
   on(btnAgenda, 'click', function () { openAgendaModal(); });
 
   // Fechar dropdowns ao clicar fora
-  on(document, 'click', function () {
-    var hadOpen = !!STATE.ui.openDropdown;
+  on(document, 'click', function (e) {
+    // Só fecha dropdowns se clicou FORA do painel
+    if (e.target && e.target.closest && e.target.closest('#mlm_srj3_panel')) {
+      // clique dentro do painel — deixa componentes decidirem
+      return;
+    }
     document.querySelectorAll('[data-mlm-dropdown="1"]').forEach(function (d) {
       d.style.display = 'none';
     });
     STATE.ui.openDropdown = null;
-    // Se fechou e tinha refresh pendente, atualiza agora
-    if (hadOpen) {
-      var pending = document.getElementById('mlm_srj3_refresh_pending');
-      if (pending) {
-        clearRefreshPending();
-        renderDataOnly();
-      }
-    }
   });
   document.body.appendChild(panel);
   renderKPIs();
@@ -3150,4 +3166,4 @@ function updateCountdown() {
     'background:linear-gradient(135deg,#7c3aed,#06b6d4);color:#fff;padding:2px 8px;border-radius:4px;font-weight:bold',
     'color:#7c3aed;font-weight:600');
 
-})();     
+})();    
