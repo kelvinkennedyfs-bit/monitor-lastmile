@@ -213,7 +213,7 @@
       DEVOLUCOES:  { sort: 'all' }
     },
     expanded: {},
-    refreshMs: 600000, refreshPaused: false, nextRefreshAt: 0,
+    refreshMs: 600000, refreshPaused: true, nextRefreshAt: 0,
     fetching: false, refreshLockedByFetch: false,
     globalFilters: {
       status: new Set(),
@@ -666,6 +666,11 @@
   // Render só dos dados — chamado pelo auto-refresh
   // NÃO MEXE NOS FILTROS, preserva dropdowns abertos
   function renderDataOnly() {
+    // Se está no meio de um fetch E temos dados antigos na tela, NÃO redesenha ainda
+    // (evita piscar durante busca da API)
+    if (STATE.fetching && dataArea.children.length > 0) {
+      return;
+    }
     STATE.ui.contentScrollTop = content.scrollTop;
     try {
       dataArea.innerHTML = '';
@@ -686,9 +691,7 @@
         'text-align:center;padding:40px 20px;color:' + T.err + ';font-size:13px',
         '⚠ Erro ao renderizar aba <b>' + STATE.tab + '</b><br>' +
         '<span style="color:' + T.muted + ';font-size:11px;font-family:' + T.fMono + '">' +
-        escapeHTML(String(err.message || err)) + '</span><br><br>' +
-        '<span style="color:' + T.muted + ';font-size:10px">' +
-        'Verifique o console (F12) para detalhes.</span>'));
+        escapeHTML(String(err.message || err)) + '</span>'));
     }
     requestAnimationFrame(function () {
       content.scrollTop = STATE.ui.contentScrollTop;
@@ -2772,8 +2775,8 @@ function updateCountdown() {
       return;
     }
     if (STATE.refreshPaused) {
-      refreshLabel.textContent = 'Pausado';
-      refreshLabel.style.color = T.warn;
+      refreshLabel.textContent = '⏸ Manual';
+      refreshLabel.style.color = T.info;
       return;
     }
     var ms = STATE.nextRefreshAt - Date.now();
@@ -3033,10 +3036,12 @@ function updateCountdown() {
     STATE.refreshLockedByFetch = true;
 
     var isFirstLoad = !STATE.routes || STATE.routes.length === 0;
-    if (!silent && isFirstLoad) {
+    // Só mostra skeleton se: primeiro load OU (usuário clicou buscar E não tem dados)
+    if (isFirstLoad) {
       dataArea.innerHTML = '';
       renderSkeleton();
     }
+    // Se JÁ tem dados na tela, NÃO limpa nada — mantém visível até o novo render
     try { refreshIcon.firstChild.classList.add('mlm_spin'); } catch (e) {}
     refreshLabel.textContent = 'Atualizando...';
     refreshLabel.style.color = T.brand2;
