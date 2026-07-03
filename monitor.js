@@ -214,7 +214,7 @@
       DEVOLUCOES:  { sort: 'all' }
     },
     expanded: {},
-    refreshMs: 600000, refreshPaused: true, nextRefreshAt: 0,
+    refreshMs: 900000, refreshPaused: true, nextRefreshAt: 0,  // 15 minutos
     fetching: false, refreshLockedByFetch: false,
     globalFilters: {
       status: new Set(),
@@ -3246,7 +3246,7 @@ function updateCountdown() {
 
   // Busca uma página da API
   function fetchPage(page) {
-    return fetch(API_URL, {
+    return throttledFetch(API_URL, {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -3260,10 +3260,7 @@ function updateCountdown() {
         pageSize: 50,
         order_by: 'performance'
       })
-    }).then(function (resp) {
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      return resp.json();
-    });
+    }).then(function (resp) { return resp.json(); });
   }
 
   // Busca TODAS as páginas (1, 2, 3, ...) até hasNext=false
@@ -3423,18 +3420,45 @@ function updateCountdown() {
   // ==========================================================================
   var ROUTE_DETAIL_URL = 'https://envios.adminml.com/logistics/api/monitoring-route/route-detail';
   var _detailCache = {};  // cache por routeId
+  var _lastRequestAt = 0;
+  var MIN_INTERVAL_MS = 400;  // mínimo 400ms entre requests
+
+  // Sleep helper
+  function sleep(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  // Fetch com throttle + retry automático em 429
+  function throttledFetch(url, options, retries) {
+    retries = (retries == null) ? 3 : retries;
+    var elapsed = Date.now() - _lastRequestAt;
+    var wait = elapsed < MIN_INTERVAL_MS ? (MIN_INTERVAL_MS - elapsed) : 0;
+    return sleep(wait).then(function () {
+      _lastRequestAt = Date.now();
+      return fetch(url, options);
+    }).then(function (resp) {
+      if (resp.status === 429) {
+        if (retries <= 0) throw new Error('Rate limit (429) — sem mais retries');
+        // Espera crescente: 1º retry=2s, 2º=4s, 3º=8s
+        var backoff = Math.pow(2, 4 - retries) * 1000;
+        console.warn('[MLM] 429 recebido, aguardando ' + backoff + 'ms antes de retry (' + retries + ' restantes)');
+        return sleep(backoff).then(function () {
+          return throttledFetch(url, options, retries - 1);
+        });
+      }
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp;
+    });
+  }
 
   function fetchRouteDetail(routeId) {
     if (_detailCache[routeId]) return Promise.resolve(_detailCache[routeId]);
     var url = ROUTE_DETAIL_URL + '?routeId=' + encodeURIComponent(routeId) + '&siteId=MLB';
-    return fetch(url, {
+    return throttledFetch(url, {
       method: 'GET',
       credentials: 'include',
       headers: { 'Accept': 'application/json' }
-    }).then(function (resp) {
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      return resp.json();
-    }).then(function (data) {
+    }).then(function (resp) { return resp.json(); }).then(function (data) {
       _detailCache[routeId] = data;
       // DEBUG: loga primeira rota pra inspecionar estrutura
       if (!window.__MLM_DETAIL_LOGGED) {
@@ -3523,7 +3547,7 @@ function updateCountdown() {
 
   // Busca detalhes em batches paralelos (max 5 concorrentes)
   function fetchAllFailures(routesWithFailures) {
-    var BATCH_SIZE = 5;
+    var BATCH_SIZE = 2;  // Reduzido para evitar 429
     var results = [];
     var idx = 0;
 
