@@ -11,7 +11,7 @@
   }
 
   var APP = window.__MLM_SRJ3_APP__ = {
-    version: '2.0',
+    version: '2.1',
     panel: null,
     timers: {},
     listeners: [],
@@ -208,6 +208,7 @@
       OFENSORAS:   { carrier: new Set(), cluster: new Set(), status: '' },
       INSUCESSOS:  { motivo: new Set(), carrier: new Set() },
       MOTORISTAS:  { carrier: new Set() },
+      DOBRANDO:    { carrier: new Set() },
       PNR:         { carrier: new Set() },
       AGENCIAS:    { sort: 'all' },
       DEVOLUCOES:  { sort: 'all' }
@@ -589,6 +590,7 @@
     { id: 'OFENSORAS',  label: 'Ofensoras' },
     { id: 'INSUCESSOS', label: 'Insucessos' },
     { id: 'MOTORISTAS', label: 'Motoristas' },
+    { id: 'DOBRANDO',   label: 'Dobrando 🔄' },
     { id: 'PNR',        label: 'PNR' },
     { id: 'AGENCIAS',   label: 'Agências' },
     { id: 'DEVOLUCOES', label: 'Devoluções' }
@@ -699,6 +701,7 @@
         case 'OFENSORAS':  renderOfensoras();  break;
         case 'INSUCESSOS': renderInsucessos(); break;
         case 'MOTORISTAS': renderMotoristas(); break;
+        case 'DOBRANDO':   renderDobrando();   break;
         case 'PNR':        renderPNR();        break;
         case 'AGENCIAS':   renderAgencias();   break;
         case 'DEVOLUCOES': renderDevolucoes(); break;
@@ -1486,10 +1489,25 @@
     var totalInsucessos = 0;
     routes.forEach(function (r) { totalInsucessos += r.failed || 0; });
 
+    // === CONTAGEM DE MOTIVOS ===
+    var motivosCount = {};
+    var totalComMotivo = 0;
+    routes.forEach(function (r) {
+      (r.failures || []).forEach(function (f) {
+        var m = f.reason || 'Sem motivo';
+        motivosCount[m] = (motivosCount[m] || 0) + 1;
+        totalComMotivo++;
+      });
+    });
+    var motivosArr = Object.keys(motivosCount).map(function (k) {
+      return { motivo: k, qtd: motivosCount[k] };
+    }).sort(function (a, b) { return b.qtd - a.qtd; });
+
     dataArea.appendChild(mk('div',
       'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:10px',
       'Insucessos <span style="color:' + T.muted + ';font-size:11px">(' +
-      fmt(totalInsucessos) + ' pacotes em ' + routes.length + ' rotas)</span>'));
+      fmt(totalInsucessos) + ' pacotes em ' + routes.length + ' rotas' +
+      (totalComMotivo > 0 ? ' · ' + totalComMotivo + ' com motivo identificado' : '') + ')</span>'));
 
     if (routes.length === 0) {
       dataArea.appendChild(mk('div',
@@ -1497,6 +1515,64 @@
         'Nenhum insucesso registrado com os filtros aplicados.'));
       setFooterCount(0, 0);
       return;
+    }
+
+    // === CARD TOP MOTIVOS (NOVO) ===
+    if (motivosArr.length > 0) {
+      var motivosCard = mk('div',
+        'background:' + T.surface + ';border:1px solid ' + T.border +
+        ';border-left:3px solid ' + T.brand + ';border-radius:10px;padding:12px 14px;margin-bottom:14px');
+      motivosCard.appendChild(mk('div',
+        'font-size:12px;font-weight:600;color:' + T.textHi + ';margin-bottom:8px',
+        '🎯 Motivos de Insucesso (' + motivosArr.length + ' distintos)'));
+
+      var mTbl = mk('table', 'width:100%;border-collapse:separate;border-spacing:0;font-size:12px');
+      var mThead = mk('thead'); var mTrh = mk('tr');
+      ['#', 'Motivo', 'Qtd', '% do total', 'Barra'].forEach(function (h) {
+        mTrh.appendChild(mk('th',
+          'padding:8px 10px;text-align:left;font-size:10px;color:' + T.muted +
+          ';font-weight:600;text-transform:uppercase;border-bottom:1px solid ' + T.border, h));
+      });
+      mThead.appendChild(mTrh); mTbl.appendChild(mThead);
+      var mTbody = mk('tbody');
+      var maxQtd = motivosArr[0].qtd;
+      motivosArr.forEach(function (m, i) {
+        var tr = mk('tr');
+        var color = i === 0 ? T.err : i < 3 ? T.warn : T.mutedHi;
+        var pct = totalComMotivo > 0 ? ((m.qtd / totalComMotivo) * 100) : 0;
+        var barPct = maxQtd > 0 ? (m.qtd / maxQtd) * 100 : 0;
+        tr.appendChild(mk('td',
+          'padding:8px 10px;color:' + color + ';font-family:' + T.fMono +
+          ';font-weight:700;border-bottom:1px solid ' + T.border, '#' + (i + 1)));
+        tr.appendChild(mk('td',
+          'padding:8px 10px;color:' + T.textHi + ';border-bottom:1px solid ' + T.border,
+          escapeHTML(m.motivo)));
+        tr.appendChild(mk('td',
+          'padding:8px 10px;color:' + T.err + ';font-family:' + T.fMono +
+          ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(m.qtd)));
+        tr.appendChild(mk('td',
+          'padding:8px 10px;color:' + T.mutedHi + ';font-family:' + T.fMono +
+          ';border-bottom:1px solid ' + T.border, pct.toFixed(1) + '%'));
+        var barTd = mk('td',
+          'padding:8px 10px;border-bottom:1px solid ' + T.border + ';width:140px');
+        var barWrap = mk('div',
+          'background:rgba(15,23,42,.6);border-radius:4px;height:10px;overflow:hidden');
+        barWrap.appendChild(mk('div',
+          'height:100%;width:' + barPct.toFixed(1) + '%;background:' + color));
+        barTd.appendChild(barWrap);
+        tr.appendChild(barTd);
+        mTbody.appendChild(tr);
+      });
+      mTbl.appendChild(mTbody);
+      motivosCard.appendChild(mTbl);
+      dataArea.appendChild(motivosCard);
+    } else {
+      // Aviso quando ainda não carregou os motivos
+      dataArea.appendChild(mk('div',
+        'background:' + T.surface + ';border:1px solid ' + T.border +
+        ';border-left:3px solid ' + T.info + ';border-radius:10px;padding:10px 14px;' +
+        'margin-bottom:14px;font-size:11px;color:' + T.mutedHi,
+        '⏳ Carregando motivos de insucesso... (aguarde alguns segundos após a busca)'));
     }
 
     // === TOP 10 ROTAS COM MAIS INSUCESSOS ===
@@ -1546,73 +1622,34 @@
     topCard.appendChild(tbl);
     dataArea.appendChild(topCard);
 
-    // === AGRUPAMENTO POR CARRIER ===
-    var byCarrier = {};
-    routes.forEach(function (r) {
-      var c = r.carrier || '—';
-      if (!byCarrier[c]) byCarrier[c] = { carrier: c, total: 0, rotas: 0 };
-      byCarrier[c].total += r.failed || 0;
-      byCarrier[c].rotas++;
-    });
-    var carriersArr = Object.keys(byCarrier).map(function (k) { return byCarrier[k]; })
-      .sort(function (a, b) { return b.total - a.total; });
-
-    var carrierCard = mk('div',
-      'background:' + T.surface + ';border:1px solid ' + T.border +
-      ';border-left:3px solid ' + T.warn + ';border-radius:10px;padding:12px 14px;margin-bottom:14px');
-    carrierCard.appendChild(mk('div',
-      'font-size:12px;font-weight:600;color:' + T.textHi + ';margin-bottom:8px',
-      '🏢 Insucessos por Transportadora'));
-
-    var tbl2 = mk('table', 'width:100%;border-collapse:separate;border-spacing:0;font-size:12px');
-    var thead2 = mk('thead'); var trh2 = mk('tr');
-    ['Carrier', 'Rotas afetadas', 'Insucessos', '% do Total'].forEach(function (h) {
-      trh2.appendChild(mk('th',
-        'padding:8px 10px;text-align:left;font-size:10px;color:' + T.muted +
-        ';font-weight:600;text-transform:uppercase;border-bottom:1px solid ' + T.border, h));
-    });
-    thead2.appendChild(trh2); tbl2.appendChild(thead2);
-    var tbody2 = mk('tbody');
-    carriersArr.forEach(function (c) {
-      var tr = mk('tr');
-      tr.appendChild(mk('td',
-        'padding:8px 10px;color:' + T.textHi + ';font-weight:600;border-bottom:1px solid ' + T.border,
-        escapeHTML(c.carrier)));
-      tr.appendChild(mk('td',
-        'padding:8px 10px;color:' + T.mutedHi + ';font-family:' + T.fMono +
-        ';border-bottom:1px solid ' + T.border, fmt(c.rotas)));
-      tr.appendChild(mk('td',
-        'padding:8px 10px;color:' + T.err + ';font-family:' + T.fMono +
-        ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(c.total)));
-      tr.appendChild(mk('td',
-        'padding:8px 10px;color:' + T.mutedHi + ';font-family:' + T.fMono +
-        ';border-bottom:1px solid ' + T.border,
-        ((c.total / totalInsucessos) * 100).toFixed(1) + '%'));
-      tbody2.appendChild(tr);
-    });
-    tbl2.appendChild(tbody2);
-    carrierCard.appendChild(tbl2);
-    dataArea.appendChild(carrierCard);
-
     // === EXPORT ===
     dataArea.appendChild(exportBar('INSUCESSOS',
       function () {
-        return routes.map(function (r) {
-          return {
-            rota: r.routeId, motorista: r.driver, carrier: r.carrier,
-            origem: r.origem, ciclo: r.ciclo, insucessos: r.failed,
-            total: r.totalPkg, pendentes: r.pendentes
-          };
+        var out = [];
+        routes.forEach(function (r) {
+          if (r.failures && r.failures.length > 0) {
+            r.failures.forEach(function (f) {
+              out.push({
+                rota: r.routeId, motorista: r.driver, carrier: r.carrier,
+                pacote: f.packageId, motivo: f.reason, endereco: f.address
+              });
+            });
+          } else {
+            out.push({
+              rota: r.routeId, motorista: r.driver, carrier: r.carrier,
+              pacote: '', motivo: '(motivo não carregado)', endereco: ''
+            });
+          }
         });
+        return out;
       },
       [
         { key: 'rota', label: 'Rota' }, { key: 'motorista', label: 'Motorista' },
-        { key: 'carrier', label: 'Carrier' }, { key: 'origem', label: 'Origem' },
-        { key: 'ciclo', label: 'Ciclo' }, { key: 'insucessos', label: 'Insucessos' },
-        { key: 'total', label: 'Total' }, { key: 'pendentes', label: 'Pendentes' }
+        { key: 'carrier', label: 'Carrier' }, { key: 'pacote', label: 'Pacote' },
+        { key: 'motivo', label: 'Motivo' }, { key: 'endereco', label: 'Endereço' }
       ], 'Insucessos — ' + STATE.ssc + ' — ' + STATE.date));
 
-    // === LISTA COMPLETA DE ROTAS COM INSUCESSO ===
+    // === LISTA COMPLETA DE ROTAS ===
     dataArea.appendChild(mk('div',
       'font-size:12px;font-weight:600;color:' + T.textHi + ';margin:14px 0 8px 0',
       '📋 Todas as rotas com insucesso (' + routes.length + ')'));
@@ -1622,20 +1659,40 @@
       var card = mk('div',
         'background:' + T.surface + ';border:1px solid ' + T.border + ';border-radius:8px;' +
         'padding:10px 12px;border-left:3px solid ' +
-        ((r.failed || 0) > 5 ? T.err : (r.failed || 0) > 2 ? T.warn : T.info) +
-        ';display:flex;align-items:center;gap:12px;flex-wrap:wrap');
-      card.appendChild(mk('div',
+        ((r.failed || 0) > 5 ? T.err : (r.failed || 0) > 2 ? T.warn : T.info));
+      var head = mk('div', 'display:flex;align-items:center;gap:12px;flex-wrap:wrap');
+      head.appendChild(mk('div',
         'font-family:' + T.fMono + ';font-size:12px;font-weight:600;color:' + T.textHi,
         escapeHTML(r.routeId)));
-      card.appendChild(mk('div', 'font-size:11px;color:' + T.mutedHi,
+      head.appendChild(mk('div', 'font-size:11px;color:' + T.mutedHi,
         escapeHTML(r.driver || '—')));
-      card.appendChild(mk('div',
+      head.appendChild(mk('div',
         'font-size:10px;color:' + T.muted + ';font-family:' + T.fMono,
-        escapeHTML(r.carrier || '—') + (r.origem ? ' · ' + escapeHTML(r.origem) : '')));
-      card.appendChild(mk('span',
+        escapeHTML(r.carrier || '—')));
+      head.appendChild(mk('span',
         'background:rgba(239,68,68,.15);color:' + T.err + ';font-size:11px;font-weight:700;' +
         'padding:2px 10px;border-radius:10px;font-family:' + T.fMono + ';margin-left:auto',
         fmt(r.failed) + ' insuc.'));
+      card.appendChild(head);
+
+      // Se tem motivos carregados, mostra breakdown
+      if (r.failures && r.failures.length > 0) {
+        var motivosRota = {};
+        r.failures.forEach(function (f) {
+          motivosRota[f.reason] = (motivosRota[f.reason] || 0) + 1;
+        });
+        var motivosLine = mk('div',
+          'margin-top:6px;padding-top:6px;border-top:1px dashed ' + T.border +
+          ';display:flex;flex-wrap:wrap;gap:6px;font-size:10px');
+        Object.keys(motivosRota).forEach(function (m) {
+          motivosLine.appendChild(mk('span',
+            'background:rgba(239,68,68,.1);color:' + T.err +
+            ';padding:2px 8px;border-radius:10px;font-weight:600',
+            escapeHTML(m) + ': ' + motivosRota[m]));
+        });
+        card.appendChild(motivosLine);
+      }
+
       grid.appendChild(card);
     });
     dataArea.appendChild(grid);
@@ -1749,6 +1806,196 @@
     ]);
     dataArea.appendChild(tbl);
     setFooterCount(filtered.length, drivers.length);
+  }
+
+  // ==========================================================================
+  // RENDER DOBRANDO — Motoristas com 2+ rotas ativas
+  // ==========================================================================
+  function renderDobrando() {
+    var routes = applyGlobalFilters(STATE.routes || []);
+
+    // Agrupa rotas por motorista
+    var byDriver = {};
+    routes.forEach(function (r) {
+      var key = r.driver || '— Sem motorista —';
+      if (!byDriver[key]) {
+        byDriver[key] = { driver: key, carrier: r.carrier || '', rotas: [] };
+      }
+      byDriver[key].rotas.push(r);
+      if (!byDriver[key].carrier && r.carrier) byDriver[key].carrier = r.carrier;
+    });
+
+    // Filtra: só quem tem 2+ rotas
+    var dobrando = Object.keys(byDriver)
+      .map(function (k) { return byDriver[k]; })
+      .filter(function (d) { return d.rotas.length >= 2; });
+
+    // Calcula totais e ordena
+    dobrando.forEach(function (d) {
+      d.totalPkg = 0; d.delivered = 0; d.failed = 0; d.pnr = 0;
+      d.rotas.forEach(function (r) {
+        d.totalPkg  += r.totalPkg  || 0;
+        d.delivered += r.delivered || 0;
+        d.failed    += r.failed    || 0;
+        d.pnr       += r.pnr       || 0;
+      });
+      d.dsPct = d.totalPkg > 0 ? (d.delivered / d.totalPkg) * 100 : 0;
+      var ag = Agenda.lookup(d.driver);
+      d.placa = ag ? (ag.placa || '') : '';
+      d.tel = ag ? (ag.tel || '') : '';
+    });
+    dobrando.sort(function (a, b) { return b.rotas.length - a.rotas.length; });
+
+    // Filtro local por carrier
+    var f = STATE.filters.DOBRANDO;
+    var carriers = [];
+    dobrando.forEach(function (d) {
+      if (d.carrier && carriers.indexOf(d.carrier) < 0) carriers.push(d.carrier);
+    });
+    carriers.sort();
+    var filtered = dobrando.filter(function (d) {
+      if (f.carrier.size > 0 && !f.carrier.has(d.carrier)) return false;
+      return true;
+    });
+
+    // === HEADER ===
+    var totalRotasDobradas = 0;
+    filtered.forEach(function (d) { totalRotasDobradas += d.rotas.length; });
+
+    dataArea.appendChild(mk('div',
+      'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:10px',
+      'Motoristas Dobrando 🔄 <span style="color:' + T.muted + ';font-size:11px">(' +
+      filtered.length + ' motoristas · ' + totalRotasDobradas + ' rotas)</span>'));
+
+    if (filtered.length === 0) {
+      dataArea.appendChild(mk('div',
+        'text-align:center;padding:40px;color:' + T.muted + ';font-style:italic',
+        '✅ Nenhum motorista está com rota dobrada no momento.'));
+      setFooterCount(0, 0);
+      return;
+    }
+
+    // === FILTRO CARRIER ===
+    if (carriers.length > 0) dataArea.appendChild(chipFilter({
+      label: 'Carrier', values: carriers, selectedSet: f.carrier,
+      onChange: function () { renderActiveTab(); }
+    }));
+
+    // === EXPORT ===
+    dataArea.appendChild(exportBar('DOBRANDO',
+      function () {
+        var out = [];
+        filtered.forEach(function (d) {
+          d.rotas.forEach(function (r, idx) {
+            out.push({
+              motorista: d.driver,
+              placa: d.placa || r.placa || '',
+              tel: d.tel,
+              carrier: d.carrier,
+              rota_num: (idx + 1) + '/' + d.rotas.length,
+              rota: r.routeId,
+              ciclo: r.ciclo || '',
+              status: r.status,
+              total: r.totalPkg,
+              entregues: r.delivered,
+              insucessos: r.failed,
+              pnr: r.pnr
+            });
+          });
+        });
+        return out;
+      },
+      [
+        { key: 'motorista', label: 'Motorista' }, { key: 'placa', label: 'Placa' },
+        { key: 'tel', label: 'Tel' }, { key: 'carrier', label: 'Carrier' },
+        { key: 'rota_num', label: 'Rota #' }, { key: 'rota', label: 'ID Rota' },
+        { key: 'ciclo', label: 'Ciclo' }, { key: 'status', label: 'Status' },
+        { key: 'total', label: 'Total' }, { key: 'entregues', label: 'Entregues' },
+        { key: 'insucessos', label: 'Insucessos' }, { key: 'pnr', label: 'PNR' }
+      ], 'Dobrando — ' + STATE.ssc + ' — ' + STATE.date));
+
+    // === CARDS ===
+    var grid = mk('div', 'display:flex;flex-direction:column;gap:10px');
+    filtered.forEach(function (d) {
+      var card = mk('div',
+        'background:' + T.surface + ';border:1px solid ' + T.border +
+        ';border-left:3px solid ' + T.warn + ';border-radius:10px;padding:12px 14px');
+
+      // Linha 1 — motorista + badge de qtd rotas
+      var line1 = mk('div', 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px');
+      line1.appendChild(mk('span',
+        'background:' + T.grad + ';color:#fff;font-size:11px;font-weight:700;' +
+        'padding:3px 10px;border-radius:10px;font-family:' + T.fMono,
+        '🔄 ' + d.rotas.length + ' ROTAS'));
+      line1.appendChild(mk('div',
+        'font-size:13px;font-weight:600;color:' + T.textHi,
+        '👤 ' + escapeHTML(d.driver)));
+      if (d.placa) {
+        line1.appendChild(mk('span',
+          'background:rgba(6,182,212,.15);color:' + T.brand2 + ';font-size:11px;font-weight:700;' +
+          'padding:2px 8px;border-radius:6px;font-family:' + T.fMono,
+          escapeHTML(d.placa)));
+      }
+      line1.appendChild(mk('span',
+        'font-size:10px;color:' + T.muted + ';font-family:' + T.fMono + ';margin-left:auto',
+        escapeHTML(d.carrier)));
+      card.appendChild(line1);
+
+      // Linha 2 — stats consolidados
+      var stats = mk('div', 'display:flex;gap:14px;font-size:11px;flex-wrap:wrap;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid ' + T.border);
+      function stat(lbl, val, color) {
+        return mk('div', '',
+          '<span style="color:' + T.muted + '">' + escapeHTML(lbl) + ':</span> ' +
+          '<span style="color:' + color + ';font-family:' + T.fMono + ';font-weight:600">' +
+          escapeHTML(String(val)) + '</span>');
+      }
+      stats.appendChild(stat('Total geral', fmt(d.totalPkg), T.text));
+      stats.appendChild(stat('Entregues', fmt(d.delivered), T.ok));
+      stats.appendChild(stat('Insucessos', fmt(d.failed), T.err));
+      stats.appendChild(stat('PNR', fmt(d.pnr), T.warn));
+      stats.appendChild(stat('DS%', d.dsPct.toFixed(1) + '%',
+        d.dsPct >= 95 ? T.ok : d.dsPct >= 90 ? T.warn : T.err));
+      card.appendChild(stats);
+
+      // Linha 3+ — cada rota individual
+      var rotasList = mk('div', 'display:flex;flex-direction:column;gap:6px');
+      d.rotas.forEach(function (r, idx) {
+        var statusColor =
+          r.status === 'Encerradas' ? T.ok :
+          r.status === 'Abertas' ? T.info : T.muted;
+        var rotaLine = mk('div',
+          'background:rgba(15,23,42,.4);border:1px solid ' + T.border +
+          ';border-left:3px solid ' + statusColor + ';border-radius:6px;padding:8px 10px;' +
+          'display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11px');
+        rotaLine.appendChild(mk('span',
+          'background:' + T.gradSoft + ';color:' + T.textHi + ';font-size:10px;font-weight:700;' +
+          'padding:1px 6px;border-radius:4px;font-family:' + T.fMono,
+          '#' + (idx + 1)));
+        rotaLine.appendChild(mk('span',
+          'font-family:' + T.fMono + ';color:' + T.textHi + ';font-weight:600',
+          escapeHTML(r.routeId)));
+        if (r.ciclo) {
+          rotaLine.appendChild(mk('span',
+            'background:rgba(6,182,212,.15);color:' + T.brand2 +
+            ';font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px',
+            escapeHTML(r.ciclo)));
+        }
+        rotaLine.appendChild(mk('span',
+          'color:' + statusColor + ';font-size:10px;font-weight:600',
+          escapeHTML(r.status)));
+        rotaLine.appendChild(mk('span',
+          'color:' + T.muted + ';font-family:' + T.fMono + ';margin-left:auto',
+          fmt(r.totalPkg) + ' pkg · ' +
+          '<span style="color:' + T.ok + '">' + fmt(r.delivered) + ' ✓</span> · ' +
+          '<span style="color:' + T.err + '">' + fmt(r.failed) + ' ✗</span> · ' +
+          '<span style="color:' + T.warn + '">' + fmt(r.pnr) + ' PNR</span>'));
+        rotasList.appendChild(rotaLine);
+      });
+      card.appendChild(rotasList);
+      grid.appendChild(card);
+    });
+    dataArea.appendChild(grid);
+    setFooterCount(filtered.length, dobrando.length);
   }
 
   // ==========================================================================
@@ -3092,8 +3339,6 @@ function updateCountdown() {
       STATE.refreshLockedByFetch = false;
       try { refreshIcon.firstChild.classList.remove('mlm_spin'); } catch (e) {}
       renderKPIs();
-      // SEMPRE re-renderiza os dados.
-      // Se tem dropdown aberto, mostra banner DEPOIS pra usuário saber que houve update.
       renderDataOnly();
       if (STATE.ui.openDropdown) {
         showRefreshPending();
@@ -3103,6 +3348,24 @@ function updateCountdown() {
       if (!silent) {
         toast('Dados carregados (' + (STATE.routes.length) + ' rotas · ' +
               (Date.now() - startedAt) + 'ms)', 'ok');
+      }
+
+      // === NOVO: busca motivos de insucesso das rotas ofensoras (async, não bloqueia) ===
+      var routesComInsucesso = (STATE.routes || []).filter(function (r) {
+        return (r.failed || 0) > 0 && (!r.failures || r.failures.length === 0);
+      });
+      if (routesComInsucesso.length > 0) {
+        console.log('[MLM] Buscando detalhes de ' + routesComInsucesso.length + ' rotas com insucesso...');
+        fetchAllFailures(routesComInsucesso).then(function (results) {
+          var ok = results.filter(function (r) { return r.ok; }).length;
+          console.log('[MLM] Motivos carregados: ' + ok + '/' + results.length + ' rotas');
+          // Re-renderiza pra mostrar os motivos
+          renderKPIs();
+          if (!STATE.ui.openDropdown) renderDataOnly();
+          if (!silent && ok > 0) {
+            toast('Motivos de ' + ok + ' rotas carregados', 'ok');
+          }
+        });
       }
     }).catch(function (err) {
       STATE.loading = false;
@@ -3123,7 +3386,82 @@ function updateCountdown() {
       }
     });
   }
+// ==========================================================================
+  // FETCH DETALHES DE ROTA (motivos de insucesso)
+  // ==========================================================================
+  var ROUTE_DETAIL_URL = 'https://envios.adminml.com/logistics/api/monitoring-route/route-detail';
+  var _detailCache = {};  // cache por routeId
 
+  function fetchRouteDetail(routeId) {
+    if (_detailCache[routeId]) return Promise.resolve(_detailCache[routeId]);
+    var url = ROUTE_DETAIL_URL + '?routeId=' + encodeURIComponent(routeId) + '&siteId=MLB';
+    return fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: { 'Accept': 'application/json' }
+    }).then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    }).then(function (data) {
+      _detailCache[routeId] = data;
+      return data;
+    });
+  }
+
+  // Extrai motivos de insucesso do JSON de detalhe
+  function extractFailures(detail) {
+    var failures = [];
+    var stops = (detail && detail.stops) || [];
+    stops.forEach(function (stop) {
+      var orders = stop.orders || [];
+      orders.forEach(function (order) {
+        var tus = order.transportUnits || [];
+        tus.forEach(function (tu) {
+          var reason = tu.incidentDescription;
+          var status = tu.status;
+          // Se tem incidentDescription E não foi entregue, conta como insucesso
+          if (reason && String(reason).trim() !== '' && status !== 'delivered') {
+            failures.push({
+              packageId: tu.printedLabel || (tu.relatedEntity && tu.relatedEntity.id) || '',
+              shipmentId: tu.relatedEntity && tu.relatedEntity.id,
+              reason: String(reason).trim(),
+              substatus: tu.relatedEntity && tu.relatedEntity.substatus,
+              address: stop.stopAddress || '',
+              sequence: stop.sequence
+            });
+          }
+        });
+      });
+    });
+    return failures;
+  }
+
+  // Busca detalhes em batches paralelos (max 5 concorrentes)
+  function fetchAllFailures(routesWithFailures) {
+    var BATCH_SIZE = 5;
+    var results = [];
+    var idx = 0;
+
+    function processBatch() {
+      var batch = routesWithFailures.slice(idx, idx + BATCH_SIZE);
+      if (batch.length === 0) return Promise.resolve(results);
+      idx += BATCH_SIZE;
+      return Promise.all(batch.map(function (r) {
+        return fetchRouteDetail(r.routeId).then(function (detail) {
+          r.failures = extractFailures(detail);
+          r.failedIds = r.failures.map(function (f) { return f.packageId; });
+          return { routeId: r.routeId, ok: true, count: r.failures.length };
+        }).catch(function (err) {
+          console.warn('[MLM] Falha ao buscar detail da rota ' + r.routeId + ':', err.message);
+          return { routeId: r.routeId, ok: false };
+        });
+      })).then(function (batchResults) {
+        results = results.concat(batchResults);
+        return processBatch();
+      });
+    }
+    return processBatch();
+  }
   // ==========================================================================
   // BIND + INIT
   // ==========================================================================
