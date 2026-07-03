@@ -1541,12 +1541,19 @@
         var color = i === 0 ? T.err : i < 3 ? T.warn : T.mutedHi;
         var pct = totalComMotivo > 0 ? ((m.qtd / totalComMotivo) * 100) : 0;
         var barPct = maxQtd > 0 ? (m.qtd / maxQtd) * 100 : 0;
+        var foraDS = isInsucessoForaDoDS(m.motivo);
         tr.appendChild(mk('td',
           'padding:8px 10px;color:' + color + ';font-family:' + T.fMono +
           ';font-weight:700;border-bottom:1px solid ' + T.border, '#' + (i + 1)));
+        var motivoCell = escapeHTML(m.motivo);
+        if (foraDS) {
+          motivoCell += ' <span style="background:rgba(148,163,184,.2);color:' + T.muted +
+            ';font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;' +
+            'margin-left:6px">FORA DO DS</span>';
+        }
         tr.appendChild(mk('td',
           'padding:8px 10px;color:' + T.textHi + ';border-bottom:1px solid ' + T.border,
-          escapeHTML(m.motivo)));
+          motivoCell));
         tr.appendChild(mk('td',
           'padding:8px 10px;color:' + T.err + ';font-family:' + T.fMono +
           ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(m.qtd)));
@@ -1814,13 +1821,24 @@
   function renderDobrando() {
     var routes = applyGlobalFilters(STATE.routes || []);
 
-    // Agrupa rotas por motorista
+    // Agrupa rotas por motorista (deduplica por routeId)
     var byDriver = {};
     routes.forEach(function (r) {
       var key = r.driver || '— Sem motorista —';
       if (!byDriver[key]) {
-        byDriver[key] = { driver: key, carrier: r.carrier || '', rotas: [] };
+        byDriver[key] = {
+          driver: key,
+          carrier: r.carrier || '',
+          rotas: [],
+          _seenIds: {}   // controle de dedup
+        };
       }
+      var rid = String(r.routeId || '');
+      if (rid && byDriver[key]._seenIds[rid]) {
+        // rota duplicada — pula
+        return;
+      }
+      byDriver[key]._seenIds[rid] = true;
       byDriver[key].rotas.push(r);
       if (!byDriver[key].carrier && r.carrier) byDriver[key].carrier = r.carrier;
     });
@@ -3329,7 +3347,21 @@ function updateCountdown() {
 
     return promise.then(function (routes) {
       if (Array.isArray(routes)) {
-        STATE.routes = routes;
+        // Deduplica por routeId (API do ML às vezes retorna a mesma rota em páginas diferentes)
+        var seen = {};
+        var deduped = [];
+        var dupCount = 0;
+        routes.forEach(function (r) {
+          var rid = String(r.routeId || '');
+          if (!rid) { deduped.push(r); return; }
+          if (seen[rid]) { dupCount++; return; }
+          seen[rid] = true;
+          deduped.push(r);
+        });
+        if (dupCount > 0) {
+          console.log('[MLM] ' + dupCount + ' rota(s) duplicada(s) removidas');
+        }
+        STATE.routes = deduped;
         STATE.lastFetch = Date.now();
       } else {
         console.warn('[MLM] Resposta inválida — mantendo snapshot anterior');
@@ -3404,6 +3436,27 @@ function updateCountdown() {
       return resp.json();
     }).then(function (data) {
       _detailCache[routeId] = data;
+      // DEBUG: loga primeira rota pra inspecionar estrutura
+      if (!window.__MLM_DETAIL_LOGGED) {
+        window.__MLM_DETAIL_LOGGED = true;
+        console.log('[MLM DEBUG] Route detail cru:', routeId, data);
+        // Loga todos os incidentDescription encontrados
+        var motivos = [];
+        var stops = (data && data.stops) || [];
+        stops.forEach(function (s) {
+          (s.orders || []).forEach(function (o) {
+            (o.transportUnits || []).forEach(function (tu) {
+              motivos.push({
+                pkg: tu.printedLabel,
+                status: tu.status,
+                substatus: tu.relatedEntity && tu.relatedEntity.substatus,
+                incidentDescription: tu.incidentDescription
+              });
+            });
+          });
+        });
+        console.table(motivos);
+      }
       return data;
     });
   }
@@ -3417,15 +3470,47 @@ function updateCountdown() {
       orders.forEach(function (order) {
         var tus = order.transportUnits || [];
         tus.forEach(function (tu) {
-          var reason = tu.incidentDescription;
-          var status = tu.status;
-          // Se tem incidentDescription E não foi entregue, conta como insucesso
-          if (reason && String(reason).trim() !== '' && status !== 'delivered') {
+          // Aceita incidentDescription OU description OU reason (variações da API)
+          var reason = tu.incidentDescription || tu.description || tu.reason || '';
+          reason = String(reason).trim();
+          var subst = (tu.relatedEntity && tu.relatedEntity.substatus) || '';
+          var stAtus = String(tu.status || '').toLowerCase();
+          var subLow = String(subst).toLowerCase();
+
+          // Regras para considerar INSUCESSO:
+          // 1. Tem motivo E não está entregue
+          // 2. OU status/substatus indica não-entrega
+          var naoEntregue = (
+            stAtus === 'pending' || stAtus === 'not_delivered' ||
+            stAtus === 'failed' || stAtus === 'incident' ||
+            subLow.indexOf('not_delivered') >= 0 ||
+            subLow.indexOf('failed') >= 0 ||
+            subLow.indexOf('transferred') >= 0 ||
+            subLow.indexOf('incident') >= 0 ||
+            subLow.indexOf('not_visited') >= 0
+          );
+          var entregue = (stAtus === 'delivered' || subLow.indexOf('delivered') >= 0);
+
+          // Se tem motivo E (não é entregue OU status desconhecido), inclui
+          if (reason && !entregue) {
             failures.push({
               packageId: tu.printedLabel || (tu.relatedEntity && tu.relatedEntity.id) || '',
               shipmentId: tu.relatedEntity && tu.relatedEntity.id,
-              reason: String(reason).trim(),
-              substatus: tu.relatedEntity && tu.relatedEntity.substatus,
+              reason: reason,
+              status: tu.status,
+              substatus: subst,
+              address: stop.stopAddress || '',
+              sequence: stop.sequence
+            });
+          }
+          // Caso especial: substatus indica falha mas não tem incidentDescription
+          else if (!reason && naoEntregue) {
+            failures.push({
+              packageId: tu.printedLabel || (tu.relatedEntity && tu.relatedEntity.id) || '',
+              shipmentId: tu.relatedEntity && tu.relatedEntity.id,
+              reason: subst || tu.status || 'Motivo não informado',
+              status: tu.status,
+              substatus: subst,
               address: stop.stopAddress || '',
               sequence: stop.sequence
             });
