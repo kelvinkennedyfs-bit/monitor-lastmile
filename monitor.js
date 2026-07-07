@@ -11,7 +11,7 @@
   }
 
   var APP = window.__MLM_SRJ3_APP__ = {
-    version: '2.1',
+    version: '2.3',
     panel: null,
     timers: {},
     listeners: [],
@@ -233,6 +233,14 @@
       dropdownScrollTop: 0,      // scroll dentro do dropdown
       contentScrollTop: 0,       // scroll da área de conteúdo
       searchValue: ''            // valor do campo de busca no dropdown
+    },
+    // Progresso de carregamento
+    loadProgress: {
+      active: false,
+      stage: '',       // 'rotas' ou 'detalhes'
+      current: 0,
+      total: 0,
+      startedAt: 0
     }
   };
   APP.STATE = STATE;
@@ -396,6 +404,25 @@
   var lastUpdate = mk('div', 'font-size:11px;color:' + T.muted + ';font-family:' + T.fMono);
   lastUpdate.textContent = 'Aguardando...';
 
+  // Barra de progresso (fica escondida quando não há loading)
+  var progressBox = mk('div',
+    'display:none;flex-direction:column;gap:3px;min-width:220px;padding:4px 10px;' +
+    'background:rgba(15,23,42,.5);border:1px solid ' + T.border + ';border-radius:8px');
+  progressBox.id = 'mlm_srj3_progress_box';
+  var progressLabel = mk('div',
+    'font-size:10px;color:' + T.mutedHi + ';font-family:' + T.fMono +
+    ';display:flex;justify-content:space-between;gap:8px',
+    '<span id="mlm_srj3_progress_text">Carregando...</span>' +
+    '<span id="mlm_srj3_progress_count" style="color:' + T.brand2 + '">0/0</span>');
+  var progressBarWrap = mk('div',
+    'background:rgba(15,23,42,.8);border-radius:3px;height:5px;overflow:hidden');
+  var progressBarFill = mk('div',
+    'height:100%;width:0%;background:' + T.grad + ';transition:width .3s ease');
+  progressBarFill.id = 'mlm_srj3_progress_bar';
+  progressBarWrap.appendChild(progressBarFill);
+  progressBox.appendChild(progressLabel);
+  progressBox.appendChild(progressBarWrap);
+
   function winBtn(svg, title) {
     var b = mk('button',
       'background:transparent;border:1px solid ' + T.border + ';color:' + T.muted +
@@ -427,7 +454,8 @@
   winCtrls.appendChild(btnMin); winCtrls.appendChild(btnMax); winCtrls.appendChild(btnClose);
 
   header.appendChild(logoDot); header.appendChild(titleWrap);
-  header.appendChild(spacer); header.appendChild(refreshWrap);
+  header.appendChild(spacer); header.appendChild(progressBox);
+  header.appendChild(refreshWrap);
   header.appendChild(lastUpdate); header.appendChild(winCtrls);
   panel.appendChild(header);
 
@@ -514,74 +542,177 @@
     kpiWrap.appendChild(card);
   });
   panel.appendChild(kpiWrap);
-// Motivos de insucesso que NÃO contam contra o DS (não foram tentativas reais)
+// Motivos que NÃO contam como insucesso operacional (ficam de fora do cálculo do DS)
   var MOTIVOS_FORA_DO_DS = [
     'nao esta na agencia', 'não está na agência', 'nao estao na agencia',
-    'não estão na agência', 'pacote nao esta na agencia', 'pacote não está na agência'
+    'não estão na agência', 'pacote nao esta na agencia', 'pacote não está na agência',
+    'transferido', 'transferida', 'transfered', 'transferred',
+    'pacote transferido', 'transferencia', 'transferência'
   ];
 
   function isInsucessoForaDoDS(motivo) {
     if (!motivo) return false;
     var norm = String(motivo).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-    return MOTIVOS_FORA_DO_DS.indexOf(norm) >= 0;
+    // Verifica match exato E contains parcial (pra pegar "Pacote transferido para rota X")
+    if (MOTIVOS_FORA_DO_DS.indexOf(norm) >= 0) return true;
+    if (norm.indexOf('transferid') >= 0) return true;
+    if (norm.indexOf('nao esta na agencia') >= 0 || norm.indexOf('não está na agência') >= 0) return true;
+    if (norm.indexOf('nao estao na agencia') >= 0 || norm.indexOf('não estão na agência') >= 0) return true;
+    return false;
   }
 
-  // Recalcula totais considerando que "Não está na agência" não conta no DS
+  // Categoriza um motivo em: 'ok' (entregue), 'foraDS' (transferido/agência), 'insucesso' (real)
+  function categorizarMotivo(reason) {
+    if (!reason) return 'insucesso';
+    return isInsucessoForaDoDS(reason) ? 'foraDS' : 'insucesso';
+  }
+// Recalcula os contadores de uma rota depois que os detalhes chegaram (r.failures populado)
+  // Isso corrige o problema de o r.failed vir do get-routes-list (que conta transferidos como insucesso)
+  function recomputeRouteCounters(r) {
+    if (!r || !r.failures || r.failures.length === 0) return;
+    var insucessoReal = 0;
+    var foraDS = 0;
+    var transferidos = 0;
+    var naoAgencia = 0;
+    r.failures.forEach(function (f) {
+      var reason = String(f.reason || '').toLowerCase();
+      if (reason.indexOf('transferid') >= 0) {
+        transferidos++; foraDS++;
+      } else if (isInsucessoForaDoDS(f.reason)) {
+        naoAgencia++; foraDS++;
+      } else {
+        insucessoReal++;
+      }
+    });
+    // Guarda os valores calculados
+    r._insucessoReal = insucessoReal;
+    r._foraDS = foraDS;
+    r._transferidos = transferidos;
+    r._naoAgencia = naoAgencia;
+    // Sobrescreve r.failed para refletir APENAS os insucessos reais (que contam no DS)
+    r.failed = insucessoReal;
+  }
+  // Recalcula totais considerando as regras do DS operacional:
+  // - Pendentes NÃO contam no DS
+  // - Transferidos NÃO contam no DS
+  // - "Não estão na agência" NÃO conta no DS
+  // - Rotas "A caminho do destino" NÃO contam no DS
+  //
+  // DS = Entregues / (Total - Pendentes - Transferidos - NaoAgencia - PacotesRotasACaminho)
   function getDSStats(routes) {
-    var total = 0, delivered = 0, failed = 0, pnr = 0, foraDS = 0;
+    var total = 0, delivered = 0, failed = 0, pnr = 0;
+    var pending = 0, transferidos = 0, naoAgencia = 0, foraDS = 0;
+    var pctACaminho = 0;
+
     routes.forEach(function (r) {
+      // Pacotes de rotas "A caminho do destino" não entram na base do DS
+      if (r.status === 'A caminho do destino') {
+        pctACaminho += r.totalPkg || 0;
+        return;
+      }
       total     += r.totalPkg  || 0;
       delivered += r.delivered || 0;
       pnr       += r.pnr       || 0;
-      (r.failures || []).forEach(function (f) {
-        if (isInsucessoForaDoDS(f.reason)) foraDS++;
-        else failed++;
-      });
-      // fallback: se não tem r.failures detalhado, usa r.failed
-      if (!r.failures || r.failures.length === 0) failed += r.failed || 0;
+      pending   += r.pending   || r.pendentes || 0;
+
+      if (r.failures && r.failures.length > 0) {
+        // Fonte confiável: veio do route-detail
+        r.failures.forEach(function (f) {
+          var reason = String(f.reason || '').toLowerCase();
+          if (reason.indexOf('transferid') >= 0) {
+            transferidos++; foraDS++;
+          } else if (isInsucessoForaDoDS(f.reason)) {
+            naoAgencia++; foraDS++;
+          } else {
+            failed++;
+          }
+        });
+      } else {
+        // Fallback: usa r.failed do get-routes-list (menos preciso, inclui transferidos)
+        failed += r.failed || 0;
+      }
     });
-    // Base do DS: descontando os que estão "fora do DS"
-    var baseDS = total - foraDS;
+
+    // Base do DS: total - pendentes - fora do DS (transferidos + não estão na agência)
+    var baseDS = Math.max(0, total - pending - foraDS);
     var dsPct = baseDS > 0 ? (delivered / baseDS) * 100 : 0;
+
     return {
-      total: total, delivered: delivered, failed: failed,
-      pnr: pnr, foraDS: foraDS, baseDS: baseDS, dsPct: dsPct
+      total: total,
+      delivered: delivered,
+      failed: failed,           // Só insucessos REAIS (que contam no DS)
+      pnr: pnr,
+      pending: pending,
+      transferidos: transferidos,
+      naoAgencia: naoAgencia,
+      foraDS: foraDS,           // transferidos + naoAgencia
+      pctACaminho: pctACaminho,
+      baseDS: baseDS,
+      dsPct: dsPct
     };
   }
 
   function renderKPIs() {
     var all = STATE.routes || [];
-    // Ignora rotas "A caminho do destino" (planned) em TUDO
-    var r = all.filter(function (rt) { return rt.status !== 'A caminho do destino'; });
-    var s = getDSStats(r);
-    var total = s.total, delivered = s.delivered, failed = s.failed, pnr = s.pnr;
+    // TOTAL PACOTES: mostra TUDO (inclui rotas "A caminho" — bate com o site do ML)
+    var totalBruto = 0;
+    all.forEach(function (rt) { totalBruto += rt.totalPkg || 0; });
+
+    // Stats do DS: descontando pendentes, transferidos, não estão na agência, e "A caminho"
+    var s = getDSStats(all);
+
+    // Contagem de rotas por status
     var running = 0, finished = 0, aCaminho = 0;
     all.forEach(function (rt) {
       if (rt.status === 'Encerradas') finished++;
       else if (rt.status === 'Abertas') running++;
       else if (rt.status === 'A caminho do destino') aCaminho++;
     });
+    var totalRotas = all.length;
+
     function set(id, txt, sub, color, pulse) {
       var v = document.getElementById('mlm_srj3_kpi_' + id + '_val');
       var subEl = document.getElementById('mlm_srj3_kpi_' + id + '_sub');
       var c = document.getElementById('mlm_srj3_kpi_' + id);
       if (v) { v.textContent = txt; if (color) v.style.color = color; }
-      if (subEl) subEl.textContent = sub || '\u00A0';
+      if (subEl) subEl.innerHTML = sub || '\u00A0';
       if (c) c.classList.toggle('mlm_kpi_pulse', !!pulse);
     }
-    set('total', fmt(total), r.length + ' rotas' + (s.foraDS > 0 ? ' · ' + s.foraDS + ' fora DS' : ''));
+
+    // TOTAL PACOTES — bruto (bate com site ML)
+    var subTotal = totalRotas + ' rotas';
+    if (s.pending > 0) subTotal += ' · ' + fmt(s.pending) + ' pend';
+    if (s.foraDS > 0)  subTotal += ' · ' + fmt(s.foraDS) + ' fora DS';
+    set('total', fmt(totalBruto), subTotal);
+
+    // ENTREGUES + %DS operacional
     var dsPct = s.dsPct;
-    set('delivered', fmt(delivered), dsPct.toFixed(1) + '% DS',
+    set('delivered', fmt(s.delivered),
+        '<b>' + dsPct.toFixed(2) + '% DS</b> · base ' + fmt(s.baseDS),
         dsPct >= 95 ? T.ok : dsPct >= 90 ? T.warn : T.err);
-    var insPct = s.baseDS > 0 ? (failed / s.baseDS) * 100 : 0;
-    set('failed', fmt(failed), insPct.toFixed(1) + '%',
+
+    // INSUCESSOS (só os reais — sem transferidos e sem "não estão na agência")
+    var insPct = s.baseDS > 0 ? (s.failed / s.baseDS) * 100 : 0;
+    var subFailed = insPct.toFixed(2) + '%';
+    if (s.transferidos > 0) subFailed += ' · +' + s.transferidos + ' transf';
+    if (s.naoAgencia > 0)   subFailed += ' · +' + s.naoAgencia + ' agência';
+    set('failed', fmt(s.failed), subFailed,
         insPct <= 3 ? T.ok : insPct <= 5 ? T.warn : T.err, insPct > 7);
-    var pnrPct = total > 0 ? (pnr / total) * 100 : 0;
-    set('pnr', fmt(pnr), pnrPct.toFixed(1) + '%',
+
+    // PNR
+    var pnrPct = totalBruto > 0 ? (s.pnr / totalBruto) * 100 : 0;
+    set('pnr', fmt(s.pnr), pnrPct.toFixed(2) + '%',
         pnrPct <= 1 ? T.ok : pnrPct <= 3 ? T.warn : T.err, pnrPct > 5);
-    set('running', fmt(running), 'de ' + r.length + (aCaminho > 0 ? ' · ' + aCaminho + ' a caminho' : ''), T.info);
-    var finPct = r.length > 0 ? (finished / r.length) * 100 : 0;
-    set('finished', fmt(finished), finPct.toFixed(0) + '%', finPct >= 80 ? T.ok : T.brand);
+
+    // ROTAS ANDAMENTO
+    var subRunning = 'de ' + totalRotas;
+    if (aCaminho > 0) subRunning += ' · ' + aCaminho + ' a caminho';
+    set('running', fmt(running), subRunning, T.info);
+
+    // ROTAS FINALIZADAS
+    var finPct = totalRotas > 0 ? (finished / totalRotas) * 100 : 0;
+    set('finished', fmt(finished), finPct.toFixed(0) + '% do total',
+        finPct >= 80 ? T.ok : T.brand);
   }
 
   // ABAS
@@ -3054,6 +3185,42 @@
     refreshBtn.innerHTML = STATE.refreshPaused ? ICON.play : ICON.pause;
     refreshBtn.title = STATE.refreshPaused ? 'Retomar' : 'Pausar';
   }
+  function showProgress(stage, current, total) {
+    STATE.loadProgress.active = true;
+    STATE.loadProgress.stage = stage;
+    STATE.loadProgress.current = current;
+    STATE.loadProgress.total = total;
+    if (!STATE.loadProgress.startedAt) STATE.loadProgress.startedAt = Date.now();
+    var box = document.getElementById('mlm_srj3_progress_box');
+    var txt = document.getElementById('mlm_srj3_progress_text');
+    var cnt = document.getElementById('mlm_srj3_progress_count');
+    var bar = document.getElementById('mlm_srj3_progress_bar');
+    if (!box) return;
+    box.style.display = 'flex';
+    var pct = total > 0 ? (current / total) * 100 : 0;
+    var labels = {
+      rotas: '📋 Carregando rotas...',
+      detalhes: '🔍 Buscando motivos...',
+      done: '✅ Concluído'
+    };
+    if (txt) txt.textContent = labels[stage] || stage;
+    if (cnt) cnt.textContent = current + '/' + total + ' (' + pct.toFixed(0) + '%)';
+    if (bar) bar.style.width = pct.toFixed(1) + '%';
+  }
+  function hideProgress(finalMessage) {
+    var box = document.getElementById('mlm_srj3_progress_box');
+    var txt = document.getElementById('mlm_srj3_progress_text');
+    var bar = document.getElementById('mlm_srj3_progress_bar');
+    if (!box) return;
+    if (finalMessage && txt) txt.textContent = finalMessage;
+    if (bar) bar.style.width = '100%';
+    // Mantém visível por 2s depois esconde
+    setTimeout(function () {
+      box.style.display = 'none';
+      STATE.loadProgress.active = false;
+      STATE.loadProgress.startedAt = 0;
+    }, 2000);
+  }
 function updateCountdown() {
     if (STATE.fetching || STATE.refreshLockedByFetch) {
       // doFetch já cuida do label — não sobrescreve
@@ -3266,12 +3433,16 @@ function updateCountdown() {
   // Busca TODAS as páginas (1, 2, 3, ...) até hasNext=false
   function fetchAllPages() {
     var allRoutes = [];
+    var totalEstimate = 0;
     function loop(page) {
+      showProgress('rotas', allRoutes.length, totalEstimate || (page * 50));
       return fetchPage(page).then(function (data) {
         var routes = (data && data.routes) || [];
         allRoutes = allRoutes.concat(routes);
         var pag = data && data.pagination;
-        if (pag && pag.hasNext && page < 20) {  // limite de segurança: 20 páginas
+        if (pag && pag.total) totalEstimate = pag.total;
+        showProgress('rotas', allRoutes.length, totalEstimate || allRoutes.length);
+        if (pag && pag.hasNext && page < 25) {
           return loop(page + 1);
         }
         return allRoutes;
@@ -3388,13 +3559,18 @@ function updateCountdown() {
         fetchAllFailures(routesComInsucesso).then(function (results) {
           var ok = results.filter(function (r) { return r.ok; }).length;
           console.log('[MLM] Motivos carregados: ' + ok + '/' + results.length + ' rotas');
-          // Re-renderiza pra mostrar os motivos
+          hideProgress('✅ ' + ok + '/' + results.length + ' rotas carregadas');
           renderKPIs();
           if (!STATE.ui.openDropdown) renderDataOnly();
           if (!silent && ok > 0) {
             toast('Motivos de ' + ok + ' rotas carregados', 'ok');
           }
+        }).catch(function (err) {
+          hideProgress('❌ Erro no carregamento');
+          console.error('[MLM] Erro em fetchAllFailures:', err);
         });
+      } else {
+        hideProgress('✅ Carregamento concluído');
       }
     }).catch(function (err) {
       STATE.loading = false;
@@ -3547,11 +3723,13 @@ function updateCountdown() {
 
   // Busca detalhes em batches paralelos (max 5 concorrentes)
   function fetchAllFailures(routesWithFailures) {
-    var BATCH_SIZE = 2;  // Reduzido para evitar 429
+    var BATCH_SIZE = 1;  // 1 por vez pra evitar completamente o 429
     var results = [];
     var idx = 0;
+    var total = routesWithFailures.length;
 
     function processBatch() {
+      showProgress('detalhes', results.length, total);
       var batch = routesWithFailures.slice(idx, idx + BATCH_SIZE);
       if (batch.length === 0) return Promise.resolve(results);
       idx += BATCH_SIZE;
@@ -3559,6 +3737,8 @@ function updateCountdown() {
         return fetchRouteDetail(r.routeId).then(function (detail) {
           r.failures = extractFailures(detail);
           r.failedIds = r.failures.map(function (f) { return f.packageId; });
+          // Atualiza contadores da rota com base nos motivos reais
+          recomputeRouteCounters(r);
           return { routeId: r.routeId, ok: true, count: r.failures.length };
         }).catch(function (err) {
           console.warn('[MLM] Falha ao buscar detail da rota ' + r.routeId + ':', err.message);
@@ -3566,6 +3746,11 @@ function updateCountdown() {
         });
       })).then(function (batchResults) {
         results = results.concat(batchResults);
+        showProgress('detalhes', results.length, total);
+        // Atualiza KPIs a cada 10 rotas processadas (feedback ao vivo)
+        if (results.length % 10 === 0) {
+          try { renderKPIs(); } catch (e) {}
+        }
         return processBatch();
       });
     }
