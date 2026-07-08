@@ -3670,45 +3670,59 @@ function updateCountdown() {
       orders.forEach(function (order) {
         var tus = order.transportUnits || [];
         tus.forEach(function (tu) {
-          // Aceita incidentDescription OU description OU reason (variações da API)
           var reason = tu.incidentDescription || tu.description || tu.reason || '';
           reason = String(reason).trim();
           var subst = (tu.relatedEntity && tu.relatedEntity.substatus) || '';
           var stAtus = String(tu.status || '').toLowerCase();
           var subLow = String(subst).toLowerCase();
 
-          // Regras para considerar INSUCESSO:
-          // 1. Tem motivo E não está entregue
-          // 2. OU status/substatus indica não-entrega
-          var naoEntregue = (
-            stAtus === 'pending' || stAtus === 'not_delivered' ||
-            stAtus === 'failed' || stAtus === 'incident' ||
-            subLow.indexOf('not_delivered') >= 0 ||
-            subLow.indexOf('failed') >= 0 ||
-            subLow.indexOf('transferred') >= 0 ||
-            subLow.indexOf('incident') >= 0 ||
-            subLow.indexOf('not_visited') >= 0
-          );
-          var entregue = (stAtus === 'delivered' || subLow.indexOf('delivered') >= 0);
+          // ============================================================
+          // REGRA RIGOROSA: só inclui como "failure" se for CONFIRMADAMENTE
+          // uma não-entrega (com motivo explícito).
+          // Pacotes PENDING/planejados/aguardando NÃO são insucessos.
+          // ============================================================
 
-          // Se tem motivo E (não é entregue OU status desconhecido), inclui
-          if (reason && !entregue) {
-            failures.push({
-              packageId: tu.printedLabel || (tu.relatedEntity && tu.relatedEntity.id) || '',
-              shipmentId: tu.relatedEntity && tu.relatedEntity.id,
-              reason: reason,
-              status: tu.status,
-              substatus: subst,
-              address: stop.stopAddress || '',
-              sequence: stop.sequence
-            });
+          // Status que indicam ENTREGA — pular
+          if (stAtus === 'delivered' || subLow.indexOf('delivered') >= 0) {
+            return;
           }
-          // Caso especial: substatus indica falha mas não tem incidentDescription
-          else if (!reason && naoEntregue) {
+
+          // Status que indicam PENDENTE (ainda vai ser entregue) — pular
+          if (stAtus === 'pending' || stAtus === 'to_be_visited' ||
+              stAtus === 'to_visit' || stAtus === 'planned' ||
+              subLow.indexOf('pending') >= 0 ||
+              subLow.indexOf('to_be_visited') >= 0 ||
+              subLow.indexOf('to_visit') >= 0 ||
+              subLow.indexOf('planned') >= 0 ||
+              subLow.indexOf('on_way') >= 0 ||
+              subLow.indexOf('in_transit') >= 0) {
+            return;
+          }
+
+          // Só considera INSUCESSO se tiver incidentDescription (motivo explícito)
+          // OU substatus que indica falha confirmada
+          var falhaConfirmada = (
+            subLow.indexOf('not_delivered') >= 0 ||
+            subLow.indexOf('not_visited') >= 0 ||
+            subLow.indexOf('failed') >= 0 ||
+            subLow.indexOf('incident') >= 0 ||
+            subLow.indexOf('transferred') >= 0 ||
+            subLow.indexOf('refused') >= 0 ||
+            subLow.indexOf('absent') >= 0 ||
+            stAtus === 'not_delivered' ||
+            stAtus === 'failed' ||
+            stAtus === 'incident' ||
+            stAtus === 'transferred'
+          );
+
+          // Só entra na lista se:
+          // - Tem motivo (incidentDescription) — significa que teve ocorrência
+          // - OU tem falha confirmada pelo substatus
+          if (reason || falhaConfirmada) {
             failures.push({
               packageId: tu.printedLabel || (tu.relatedEntity && tu.relatedEntity.id) || '',
               shipmentId: tu.relatedEntity && tu.relatedEntity.id,
-              reason: subst || tu.status || 'Motivo não informado',
+              reason: reason || subst || tu.status || 'Motivo não informado',
               status: tu.status,
               substatus: subst,
               address: stop.stopAddress || '',
