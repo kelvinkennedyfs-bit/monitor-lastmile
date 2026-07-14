@@ -569,14 +569,17 @@
 // Recalcula os contadores de uma rota depois que os detalhes chegaram (r.failures populado)
   // Isso corrige o problema de o r.failed vir do get-routes-list (que conta transferidos como insucesso)
   function recomputeRouteCounters(r) {
-    if (!r || !r.failures || r.failures.length === 0) return;
+    if (!r) return;
     var insucessoReal = 0;
     var foraDS = 0;
     var transferidos = 0;
     var naoAgencia = 0;
-    r.failures.forEach(function (f) {
+
+    (r.failures || []).forEach(function (f) {
       var reason = String(f.reason || '').toLowerCase();
-      if (reason.indexOf('transferid') >= 0) {
+      var subst  = String(f.substatus || '').toLowerCase();
+      if (subst === 'transferred' || subst.indexOf('transferred') >= 0 ||
+          reason.indexOf('transferid') >= 0) {
         transferidos++; foraDS++;
       } else if (isInsucessoForaDoDS(f.reason)) {
         naoAgencia++; foraDS++;
@@ -584,13 +587,16 @@
         insucessoReal++;
       }
     });
-    // Guarda os valores calculados
+
     r._insucessoReal = insucessoReal;
     r._foraDS = foraDS;
     r._transferidos = transferidos;
     r._naoAgencia = naoAgencia;
-    // Sobrescreve r.failed para refletir APENAS os insucessos reais (que contam no DS)
+    // SEMPRE sobrescreve r.failed com o valor recalculado
+    // (mesmo se failures vazio, significa "esta rota não tem insucesso real")
     r.failed = insucessoReal;
+    // Marca que essa rota já teve details processados
+    r._detailsLoaded = true;
   }
   // Recalcula totais considerando as regras do DS operacional:
   // - Pendentes NÃO contam no DS
@@ -1614,8 +1620,18 @@
   function renderInsucessos() {
     var allRoutes = applyGlobalFilters(STATE.routes || [])
       .filter(function (r) { return r.status !== 'A caminho do destino'; });
-    var routes = allRoutes.filter(function (r) { return (r.failed || 0) > 0; });
-    routes.sort(function (a, b) { return (b.failed || 0) - (a.failed || 0); });
+    // Uma rota entra na lista se:
+    //  - Já teve details carregados E tem insucesso real (>0), OU
+    //  - Ainda não teve details E API disse que tem failed >0 (mostra enquanto carrega)
+    var routes = allRoutes.filter(function (r) {
+      if (r._detailsLoaded) return (r._insucessoReal || 0) > 0;
+      return (r.failed || 0) > 0;
+    });
+    routes.sort(function (a, b) {
+      var aVal = a._detailsLoaded ? (a._insucessoReal || 0) : (a.failed || 0);
+      var bVal = b._detailsLoaded ? (b._insucessoReal || 0) : (b.failed || 0);
+      return bVal - aVal;
+    });
 
     var totalInsucessos = 0;
     routes.forEach(function (r) { totalInsucessos += r.failed || 0; });
@@ -1634,11 +1650,22 @@
       return { motivo: k, qtd: motivosCount[k] };
     }).sort(function (a, b) { return b.qtd - a.qtd; });
 
+    // Conta rotas ainda pendentes de carregamento
+    var pendentesDetail = routes.filter(function (r) { return !r._detailsLoaded; }).length;
+    var carregadas = routes.length - pendentesDetail;
+
+    var subInfo = fmt(totalInsucessos) + ' pacotes em ' + routes.length + ' rotas';
+    if (pendentesDetail > 0) {
+      subInfo += ' · <span style="color:' + T.warn + '">⏳ ' + pendentesDetail +
+                 ' aguardando detalhes</span>';
+    }
+    if (totalComMotivo > 0) {
+      subInfo += ' · ' + totalComMotivo + ' motivos identificados';
+    }
+
     dataArea.appendChild(mk('div',
       'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:10px',
-      'Insucessos <span style="color:' + T.muted + ';font-size:11px">(' +
-      fmt(totalInsucessos) + ' pacotes em ' + routes.length + ' rotas' +
-      (totalComMotivo > 0 ? ' · ' + totalComMotivo + ' com motivo identificado' : '') + ')</span>'));
+      'Insucessos <span style="color:' + T.muted + ';font-size:11px">(' + subInfo + ')</span>'));
 
     if (routes.length === 0) {
       dataArea.appendChild(mk('div',
@@ -1704,13 +1731,26 @@
       mTbl.appendChild(mTbody);
       motivosCard.appendChild(mTbl);
       dataArea.appendChild(motivosCard);
-    } else {
-      // Aviso quando ainda não carregou os motivos
+    } else if (pendentesDetail > 0) {
+      // Aviso só se realmente ainda falta carregar
+      var prog = STATE.loadProgress;
+      var progInfo = '';
+      if (prog && prog.active && prog.total > 0) {
+        progInfo = ' (' + prog.current + '/' + prog.total + ')';
+      }
       dataArea.appendChild(mk('div',
         'background:' + T.surface + ';border:1px solid ' + T.border +
         ';border-left:3px solid ' + T.info + ';border-radius:10px;padding:10px 14px;' +
         'margin-bottom:14px;font-size:11px;color:' + T.mutedHi,
-        '⏳ Carregando motivos de insucesso... (aguarde alguns segundos após a busca)'));
+        '⏳ Carregando motivos de insucesso' + progInfo +
+        '... (aguarde alguns segundos após a busca)'));
+    } else if (motivosArr.length === 0) {
+      // Todos carregados mas nenhum motivo — improvável mas possível
+      dataArea.appendChild(mk('div',
+        'background:' + T.surface + ';border:1px solid ' + T.border +
+        ';border-left:3px solid ' + T.ok + ';border-radius:10px;padding:10px 14px;' +
+        'margin-bottom:14px;font-size:11px;color:' + T.mutedHi,
+        '✓ Nenhum motivo detalhado registrado para essas rotas.'));
     }
 
     // === TOP 10 ROTAS COM MAIS INSUCESSOS ===
