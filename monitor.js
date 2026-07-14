@@ -3598,12 +3598,26 @@ function updateCountdown() {
         console.log('[MLM] Buscando detalhes de ' + routesComInsucesso.length + ' rotas com insucesso...');
         fetchAllFailures(routesComInsucesso).then(function (results) {
           var ok = results.filter(function (r) { return r.ok; }).length;
-          console.log('[MLM] Motivos carregados: ' + ok + '/' + results.length + ' rotas');
-          hideProgress('✅ ' + ok + '/' + results.length + ' rotas carregadas');
+          var falhou = results.filter(function (r) { return !r.ok; }).length;
+          
+          // Soma final de insucessos reais
+          var somaReal = 0;
+          (STATE.routes || []).forEach(function (r) {
+            if (r._detailsLoaded) somaReal += (r._insucessoReal || 0);
+          });
+          
+          console.log('[MLM] ===== CARREGAMENTO CONCLUÍDO =====');
+          console.log('[MLM] Rotas com sucesso:', ok);
+          console.log('[MLM] Rotas com falha:', falhou);
+          console.log('[MLM] Total insucessos REAIS:', somaReal);
+          console.log('[MLM] =====================================');
+          
+          hideProgress('✅ ' + ok + '/' + results.length + ' rotas · ' + somaReal + ' insucessos');
           renderKPIs();
           if (!STATE.ui.openDropdown) renderDataOnly();
-          if (!silent && ok > 0) {
-            toast('Motivos de ' + ok + ' rotas carregados', 'ok');
+          if (!silent) {
+            toast(ok + '/' + results.length + ' rotas processadas · ' +
+                  somaReal + ' insucessos reais', ok === results.length ? 'ok' : 'warn');
           }
         }).catch(function (err) {
           hideProgress('❌ Erro no carregamento');
@@ -3637,7 +3651,7 @@ function updateCountdown() {
   var ROUTE_DETAIL_URL = 'https://envios.adminml.com/logistics/api/monitoring-route/route-detail';
   var _detailCache = {};  // cache por routeId
   var _lastRequestAt = 0;
-  var MIN_INTERVAL_MS = 400;  // mínimo 400ms entre requests
+  var MIN_INTERVAL_MS = 250;  // 250ms entre requests
 
   // Sleep helper
   function sleep(ms) {
@@ -3646,7 +3660,7 @@ function updateCountdown() {
 
   // Fetch com throttle + retry automático em 429
   function throttledFetch(url, options, retries) {
-    retries = (retries == null) ? 3 : retries;
+    retries = (retries == null) ? 5 : retries;
     var elapsed = Date.now() - _lastRequestAt;
     var wait = elapsed < MIN_INTERVAL_MS ? (MIN_INTERVAL_MS - elapsed) : 0;
     return sleep(wait).then(function () {
@@ -3782,29 +3796,51 @@ function updateCountdown() {
     var idx = 0;
     var total = routesWithFailures.length;
 
+    function fetchAllFailures(routesWithFailures) {
+    var BATCH_SIZE = 3;   // 3 requests em paralelo
+    var results = [];
+    var idx = 0;
+    var total = routesWithFailures.length;
+    var falhasSeguidas = 0;
+
     function processBatch() {
       showProgress('detalhes', results.length, total);
       var batch = routesWithFailures.slice(idx, idx + BATCH_SIZE);
       if (batch.length === 0) return Promise.resolve(results);
       idx += BATCH_SIZE;
+
       return Promise.all(batch.map(function (r) {
         return fetchRouteDetail(r.routeId).then(function (detail) {
           r.failures = extractFailures(detail);
           r.failedIds = r.failures.map(function (f) { return f.packageId; });
-          // Atualiza contadores da rota com base nos motivos reais
           recomputeRouteCounters(r);
+          falhasSeguidas = 0;
           return { routeId: r.routeId, ok: true, count: r.failures.length };
         }).catch(function (err) {
-          console.warn('[MLM] Falha ao buscar detail da rota ' + r.routeId + ':', err.message);
-          return { routeId: r.routeId, ok: false };
+          console.warn('[MLM] Falha detail ' + r.routeId + ':', err.message);
+          falhasSeguidas++;
+          return { routeId: r.routeId, ok: false, error: err.message };
         });
       })).then(function (batchResults) {
         results = results.concat(batchResults);
-        showProgress('detalhes', results.length, total);
-        // Atualiza KPIs a cada 10 rotas processadas (feedback ao vivo)
-        if (results.length % 10 === 0) {
-          try { renderKPIs(); } catch (e) {}
+
+        // Feedback ao vivo a cada batch
+        try {
+          renderKPIs();
+          // Se está na aba insucessos, re-renderiza pra mostrar progresso
+          if (STATE.tab === 'INSUCESSOS' && !STATE.ui.openDropdown) {
+            renderDataOnly();
+          }
+        } catch (e) {}
+
+        // Se 3 batches seguidos falharam, aumenta throttle e continua
+        if (falhasSeguidas >= 6) {
+          console.warn('[MLM] Muitas falhas seguidas, aumentando throttle');
+          MIN_INTERVAL_MS = Math.min(2000, MIN_INTERVAL_MS * 2);
+          falhasSeguidas = 0;
+          return sleep(3000).then(processBatch);
         }
+
         return processBatch();
       });
     }
