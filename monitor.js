@@ -588,13 +588,13 @@
       }
     });
 
+    // Guarda os valores REAIS (que contam no DS)
     r._insucessoReal = insucessoReal;
     r._foraDS = foraDS;
     r._transferidos = transferidos;
     r._naoAgencia = naoAgencia;
-    // SEMPRE sobrescreve r.failed com o valor recalculado
-    // (mesmo se failures vazio, significa "esta rota não tem insucesso real")
-    r.failed = insucessoReal;
+    // Preserva o r.failed ORIGINAL da API (bruto, inclui pendentes/transferidos)
+    // Não sobrescreve — assim o filtro da aba Insucessos continua funcionando
     // Marca que essa rota já teve details processados
     r._detailsLoaded = true;
   }
@@ -621,20 +621,14 @@
       pnr       += r.pnr       || 0;
       pending   += r.pending   || r.pendentes || 0;
 
-      if (r.failures && r.failures.length > 0) {
+      if (r._detailsLoaded) {
         // Fonte confiável: veio do route-detail
-        r.failures.forEach(function (f) {
-          var reason = String(f.reason || '').toLowerCase();
-          if (reason.indexOf('transferid') >= 0) {
-            transferidos++; foraDS++;
-          } else if (isInsucessoForaDoDS(f.reason)) {
-            naoAgencia++; foraDS++;
-          } else {
-            failed++;
-          }
-        });
+        failed        += r._insucessoReal || 0;
+        transferidos  += r._transferidos  || 0;
+        naoAgencia    += r._naoAgencia    || 0;
+        foraDS        += r._foraDS        || 0;
       } else {
-        // Fallback: usa r.failed do get-routes-list (menos preciso, inclui transferidos)
+        // Fallback: usa r.failed do get-routes-list (menos preciso, inclui pendentes/transferidos)
         failed += r.failed || 0;
       }
     });
@@ -1634,13 +1628,17 @@
     });
 
     var totalInsucessos = 0;
-    routes.forEach(function (r) { totalInsucessos += r.failed || 0; });
+    routes.forEach(function (r) {
+      totalInsucessos += r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
+    });
 
-    // === CONTAGEM DE MOTIVOS ===
+    // === CONTAGEM DE MOTIVOS (só os insucessos REAIS) ===
     var motivosCount = {};
     var totalComMotivo = 0;
     routes.forEach(function (r) {
       (r.failures || []).forEach(function (f) {
+        // Pula motivos "fora do DS" (transferidos, não estão na agência)
+        if (isInsucessoForaDoDS(f.reason)) return;
         var m = f.reason || 'Sem motivo';
         motivosCount[m] = (motivosCount[m] || 0) + 1;
         totalComMotivo++;
@@ -1787,13 +1785,14 @@
       tr.appendChild(mk('td',
         'padding:8px 10px;color:' + T.muted + ';font-family:' + T.fMono +
         ';font-size:11px;border-bottom:1px solid ' + T.border, escapeHTML(r.carrier || '—')));
+      var insucR = r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
       tr.appendChild(mk('td',
         'padding:8px 10px;color:' + T.err + ';font-family:' + T.fMono +
-        ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(r.failed)));
+        ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(insucR)));
       tr.appendChild(mk('td',
         'padding:8px 10px;color:' + T.mutedHi + ';font-family:' + T.fMono +
         ';border-bottom:1px solid ' + T.border,
-        ((r.failed / totalInsucessos) * 100).toFixed(1) + '%'));
+        totalInsucessos > 0 ? ((insucR / totalInsucessos) * 100).toFixed(1) + '%' : '0%'));
       tbody.appendChild(tr);
     });
     tbl.appendChild(tbody);
@@ -1847,10 +1846,11 @@
       head.appendChild(mk('div',
         'font-size:10px;color:' + T.muted + ';font-family:' + T.fMono,
         escapeHTML(r.carrier || '—')));
+      var insucRota = r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
       head.appendChild(mk('span',
         'background:rgba(239,68,68,.15);color:' + T.err + ';font-size:11px;font-weight:700;' +
         'padding:2px 10px;border-radius:10px;font-family:' + T.fMono + ';margin-left:auto',
-        fmt(r.failed) + ' insuc.'));
+        fmt(insucRota) + ' insuc.'));
       card.appendChild(head);
 
       // Se tem motivos carregados, mostra breakdown
