@@ -593,12 +593,11 @@
     // NÃO mexe em r.failed — deixa o valor original da API pra usar como fallback
   }
   // Recalcula totais considerando as regras do DS operacional:
-  // - Pendentes NÃO contam no DS
-  // - Transferidos NÃO contam no DS
-  // - "Não estão na agência" NÃO conta no DS
+  // - DS = Entregues / (Entregues + Insucessos reais)
+  // - Transferidos NÃO contam
+  // - "Não estão na agência" NÃO conta
   // - Rotas "A caminho do destino" NÃO contam no DS
-  //
-  // DS = Entregues / (Total - Pendentes - Transferidos - NaoAgencia - PacotesRotasACaminho)
+  // - Pendentes (aguardando) NÃO entram na base do DS
   function getDSStats(routes) {
     var total = 0, delivered = 0, failed = 0, pnr = 0;
     var pending = 0, transferidos = 0, naoAgencia = 0, foraDS = 0;
@@ -615,19 +614,22 @@
       pending   += r.pending   || r.pendentes || 0;
 
       if (r._detailsLoaded) {
-        // Fonte confiável: veio do route-detail
         failed       += r._insucessoReal || 0;
         transferidos += r._transferidos  || 0;
         naoAgencia   += r._naoAgencia    || 0;
         foraDS       += r._foraDS        || 0;
       } else {
-        // Fallback: usa r.failed da API (bruto, inclui pendentes/transferidos)
         failed += r.failed || 0;
       }
     });
 
-    var baseDS = Math.max(0, total - pending - foraDS);
+    // ⭐ NOVA FÓRMULA: base do DS = entregues + insucessos reais
+    // Isso garante que DS nunca passa de 100% e reflete o desempenho REAL
+    var baseDS = delivered + failed;
     var dsPct = baseDS > 0 ? (delivered / baseDS) * 100 : 0;
+
+    // Trava de segurança: DS máximo é 100%
+    if (dsPct > 100) dsPct = 100;
 
     return {
       total: total, delivered: delivered, failed: failed, pnr: pnr,
