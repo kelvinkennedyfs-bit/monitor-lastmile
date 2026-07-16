@@ -1610,19 +1610,24 @@
     var totalInsucessos = 0;
     routes.forEach(function (r) { totalInsucessos += getInsuc(r); });
 
-    // === CONTAGEM DE MOTIVOS (só reais, pula fora-do-DS) ===
+    // === CONTAGEM DE MOTIVOS (inclui agência/transferido, mas marca como "fora DS") ===
     var motivosCount = {};
+    var motivosForaDS = {};  // rastreia quais são fora do DS
     var totalComMotivo = 0;
     routes.forEach(function (r) {
       (r.failures || []).forEach(function (f) {
-        if (isInsucessoForaDoDS(f.reason)) return;
         var m = f.reason || 'Sem motivo';
         motivosCount[m] = (motivosCount[m] || 0) + 1;
-        totalComMotivo++;
+        if (isInsucessoForaDoDS(f.reason)) {
+          motivosForaDS[m] = true;
+        } else {
+          totalComMotivo++;  // só conta no total do DS os reais
+        }
       });
     });
+    // Também precisamos varrer as rotas pra pegar TODOS os failures (inclusive os que vieram só como r.failures com transferidos)
     var motivosArr = Object.keys(motivosCount).map(function (k) {
-      return { motivo: k, qtd: motivosCount[k] };
+      return { motivo: k, qtd: motivosCount[k], foraDS: !!motivosForaDS[k] };
     }).sort(function (a, b) { return b.qtd - a.qtd; });
 
     // Rotas ainda aguardando detail
@@ -1671,21 +1676,23 @@
       var maxQtd = motivosArr[0].qtd;
       motivosArr.forEach(function (m, i) {
         var tr = mk('tr');
-        var color = i === 0 ? T.err : i < 3 ? T.warn : T.mutedHi;
-        var pctM = totalComMotivo > 0 ? ((m.qtd / totalComMotivo) * 100) : 0;
+        var color = m.foraDS ? T.muted : (i === 0 ? T.err : i < 3 ? T.warn : T.mutedHi);
+        var pctM = m.foraDS ? 0 : (totalComMotivo > 0 ? ((m.qtd / totalComMotivo) * 100) : 0);
         var barPct = maxQtd > 0 ? (m.qtd / maxQtd) * 100 : 0;
         tr.appendChild(mk('td',
           'padding:8px 10px;color:' + color + ';font-family:' + T.fMono +
           ';font-weight:700;border-bottom:1px solid ' + T.border, '#' + (i + 1)));
         tr.appendChild(mk('td',
           'padding:8px 10px;color:' + T.textHi + ';border-bottom:1px solid ' + T.border,
-          escapeHTML(m.motivo)));
+          escapeHTML(m.motivo) + (m.foraDS ?
+            ' <span style="background:rgba(148,163,184,.15);color:' + T.muted +
+            ';font-size:9px;font-weight:600;padding:1px 6px;border-radius:4px;margin-left:6px">FORA DO DS</span>' : '')));
         tr.appendChild(mk('td',
-          'padding:8px 10px;color:' + T.err + ';font-family:' + T.fMono +
+          'padding:8px 10px;color:' + (m.foraDS ? T.muted : T.err) + ';font-family:' + T.fMono +
           ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(m.qtd)));
         tr.appendChild(mk('td',
           'padding:8px 10px;color:' + T.mutedHi + ';font-family:' + T.fMono +
-          ';border-bottom:1px solid ' + T.border, pctM.toFixed(1) + '%'));
+          ';border-bottom:1px solid ' + T.border, m.foraDS ? '—' : pctM.toFixed(1) + '%'));
         var barTd = mk('td',
           'padding:8px 10px;border-bottom:1px solid ' + T.border + ';width:140px');
         var barWrap = mk('div',
