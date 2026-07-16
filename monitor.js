@@ -1299,7 +1299,7 @@
     dataArea.appendChild(summaryBar);
 
     // === Export bar ===
-    datdataArea.appendChild(exportBar('ROTAS',
+    dataArea.appendChild(exportBar('ROTAS',
       function () {
         return routes.map(function (r) {
           var pendentes = Math.max(0, (r.totalPkg || 0) - (r.delivered || 0) - (r.failed || 0));
