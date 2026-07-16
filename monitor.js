@@ -2976,33 +2976,6 @@
     setTimeout(doConsolidate, 100);
   }
 
-    function refresh() { preview.textContent = buildText(); }
-    [inpOperador, inpObs, inpAcoes, inpPendencia].forEach(function (el) { el.oninput = refresh; });
-    refresh();
-
-    var btnCopiar = mk('button', '', ICON.copy + '<span>Copiar</span>');
-    btnCopiar.style.cssText = 'background:' + T.grad + ';border:none;color:#fff;padding:8px 16px;' +
-      'border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;' +
-      'align-items:center;gap:6px';
-    btnCopiar.onclick = function () {
-      copyText(buildText()).then(function () { toast('Fechamento copiado', 'ok'); })
-        .catch(function () { toast('Falha ao copiar', 'err'); });
-    };
-    var btnPDF = mk('button', '', ICON.print + '<span>Exportar PDF</span>');
-    btnPDF.className = 'mlm_btn mlm_btn_warn';
-    btnPDF.onclick = function () {
-      var html = '<pre style="font-family:Consolas,monospace;font-size:11px;white-space:pre-wrap">' +
-        escapeHTML(buildText()) + '</pre>';
-      pdfExportHTML(html, 'Fechamento ' + STATE.ssc + ' — ' + dataFmt);
-    };
-    var btnFechar = mk('button', '', '<span>Fechar</span>');
-    btnFechar.className = 'mlm_btn';
-    btnFechar.onclick = modal.close;
-    modal.footer.appendChild(btnFechar);
-    modal.footer.appendChild(btnPDF);
-    modal.footer.appendChild(btnCopiar);
-  }
-
   function parseCSV(text) {
     var firstLine = text.split(/\r?\n/)[0] || '';
     var sep = (firstLine.split(';').length > firstLine.split(',').length) ? ';' : ',';
