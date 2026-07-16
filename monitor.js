@@ -1299,13 +1299,13 @@
     dataArea.appendChild(summaryBar);
 
     // === Export bar ===
-    dataArea.appendChild(exportBar('ROTAS',
+    datdataArea.appendChild(exportBar('ROTAS',
       function () {
         return routes.map(function (r) {
           var pendentes = Math.max(0, (r.totalPkg || 0) - (r.delivered || 0) - (r.failed || 0));
           var prog = r.totalPkg > 0 ? ((r.delivered || 0) / r.totalPkg * 100).toFixed(1) + '%' : '0%';
           return {
-            rota: r.routeId, motorista: r.driver, placa: r.placa || r.plate || '',
+            rota: r.routeId, codigo: r.cluster || '', motorista: r.driver, placa: r.placa || r.plate || '',
             carrier: r.carrier, ciclo: r.ciclo || r.cycle || '', tipo: r.tipo || r.routeType || '',
             modal: r.modal || r.vehicle || '', origem: r.origem || r.origin || '',
             status: r.status, total: r.totalPkg, entregues: r.delivered,
@@ -1314,7 +1314,7 @@
         });
       },
       [
-        { key: 'rota', label: 'Rota' }, { key: 'motorista', label: 'Motorista' },
+        { key: 'rota', label: 'ID Rota' }, { key: 'codigo', label: 'Código' }, { key: 'motorista', label: 'Motorista' },
         { key: 'placa', label: 'Placa' }, { key: 'carrier', label: 'Transp.' },
         { key: 'ciclo', label: 'Ciclo' }, { key: 'tipo', label: 'Tipo' },
         { key: 'modal', label: 'Modal' }, { key: 'origem', label: 'Origem' },
@@ -1530,14 +1530,14 @@
       function () {
         return filtered.map(function (r) {
           return {
-            rota: r.routeId, motorista: r.driver, carrier: r.carrier,
+            rota: r.routeId, codigo: r.cluster || '', motorista: r.driver, carrier: r.carrier,
             cluster: r.cluster, total: r.totalPkg, entregues: r.delivered,
             insucessos: r.failed, pnr: r.pnr, status: r.status
           };
         });
       },
       [
-        { key: 'rota', label: 'Rota' }, { key: 'motorista', label: 'Motorista' },
+        { key: 'rota', label: 'ID Rota' }, { key: 'codigo', label: 'Código' }, { key: 'motorista', label: 'Motorista' },
         { key: 'carrier', label: 'Carrier' }, { key: 'cluster', label: 'Cluster' },
         { key: 'total', label: 'Total' }, { key: 'entregues', label: 'Entregues' },
         { key: 'insucessos', label: 'Insucessos' }, { key: 'pnr', label: 'PNR' },
@@ -1764,13 +1764,13 @@
           if (r.failures && r.failures.length > 0) {
             r.failures.forEach(function (f) {
               out.push({
-                rota: r.routeId, motorista: r.driver, carrier: r.carrier,
+                rota: r.routeId, codigo: r.cluster || '', motorista: r.driver, carrier: r.carrier,
                 pacote: f.packageId, motivo: f.reason, endereco: f.address
               });
             });
           } else {
             out.push({
-              rota: r.routeId, motorista: r.driver, carrier: r.carrier,
+              rota: r.routeId, codigo: r.cluster || '', motorista: r.driver, carrier: r.carrier,
               pacote: '', motivo: '(motivo não carregado)', endereco: ''
             });
           }
@@ -1778,7 +1778,7 @@
         return out;
       },
       [
-        { key: 'rota', label: 'Rota' }, { key: 'motorista', label: 'Motorista' },
+        { key: 'rota', label: 'ID Rota' }, { key: 'codigo', label: 'Código' }, { key: 'motorista', label: 'Motorista' },
         { key: 'carrier', label: 'Carrier' }, { key: 'pacote', label: 'Pacote' },
         { key: 'motivo', label: 'Motivo' }, { key: 'endereco', label: 'Endereço' }
       ], 'Insucessos — ' + STATE.ssc + ' — ' + STATE.date));
@@ -2042,6 +2042,7 @@
               carrier: d.carrier,
               rota_num: (idx + 1) + '/' + d.rotas.length,
               rota: r.routeId,
+              codigo: r.cluster || '',
               ciclo: r.ciclo || '',
               status: r.status,
               total: r.totalPkg,
@@ -2057,6 +2058,7 @@
         { key: 'motorista', label: 'Motorista' }, { key: 'placa', label: 'Placa' },
         { key: 'tel', label: 'Tel' }, { key: 'carrier', label: 'Carrier' },
         { key: 'rota_num', label: 'Rota #' }, { key: 'rota', label: 'ID Rota' },
+        { key: 'codigo', label: 'Código' },
         { key: 'ciclo', label: 'Ciclo' }, { key: 'status', label: 'Status' },
         { key: 'total', label: 'Total' }, { key: 'entregues', label: 'Entregues' },
         { key: 'insucessos', label: 'Insucessos' }, { key: 'pnr', label: 'PNR' }
@@ -2155,8 +2157,9 @@
     routes.forEach(function (r) {
       (r.pnrList || []).forEach(function (pk) {
         pkgs.push({
-          packageId: pk.packageId, rota: r.routeId, motorista: r.driver || '—',
-          carrier: r.carrier || '', motivo: pk.reason || 'Não retirado', hora: pk.time || ''
+          packageId: pk.packageId, rota: r.routeId, codigo: r.cluster || '',
+          motorista: r.driver || '—', carrier: r.carrier || '',
+          motivo: pk.reason || 'Não retirado', hora: pk.time || ''
         });
       });
     });
@@ -2184,7 +2187,8 @@
     dataArea.appendChild(exportBar('PNR',
       function () { return filtered; },
       [
-        { key: 'packageId', label: 'Pacote' }, { key: 'rota', label: 'Rota' },
+        { key: 'packageId', label: 'Pacote' }, { key: 'rota', label: 'ID Rota' },
+        { key: 'codigo', label: 'Código' },
         { key: 'motorista', label: 'Motorista' }, { key: 'carrier', label: 'Carrier' },
         { key: 'motivo', label: 'Motivo' }, { key: 'hora', label: 'Hora' }
       ], 'PNR — ' + STATE.ssc + ' — ' + STATE.date));
