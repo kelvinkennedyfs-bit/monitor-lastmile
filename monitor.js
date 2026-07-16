@@ -570,14 +570,11 @@
   // Isso corrige o problema de o r.failed vir do get-routes-list (que conta transferidos como insucesso)
   function recomputeRouteCounters(r) {
     if (!r) return;
-    var insucessoReal = 0;
-    var foraDS = 0;
-    var transferidos = 0;
-    var naoAgencia = 0;
+    var insucessoReal = 0, foraDS = 0, transferidos = 0, naoAgencia = 0;
 
     (r.failures || []).forEach(function (f) {
       var reason = String(f.reason || '').toLowerCase();
-      var subst  = String(f.substatus || '').toLowerCase();
+      var subst = String(f.substatus || '').toLowerCase();
       if (subst === 'transferred' || subst.indexOf('transferred') >= 0 ||
           reason.indexOf('transferid') >= 0) {
         transferidos++; foraDS++;
@@ -588,15 +585,12 @@
       }
     });
 
-    // Guarda os valores REAIS (que contam no DS)
     r._insucessoReal = insucessoReal;
     r._foraDS = foraDS;
     r._transferidos = transferidos;
     r._naoAgencia = naoAgencia;
-    // Preserva o r.failed ORIGINAL da API (bruto, inclui pendentes/transferidos)
-    // Não sobrescreve — assim o filtro da aba Insucessos continua funcionando
-    // Marca que essa rota já teve details processados
     r._detailsLoaded = true;
+    // NÃO mexe em r.failed — deixa o valor original da API pra usar como fallback
   }
   // Recalcula totais considerando as regras do DS operacional:
   // - Pendentes NÃO contam no DS
@@ -611,7 +605,6 @@
     var pctACaminho = 0;
 
     routes.forEach(function (r) {
-      // Pacotes de rotas "A caminho do destino" não entram na base do DS
       if (r.status === 'A caminho do destino') {
         pctACaminho += r.totalPkg || 0;
         return;
@@ -623,32 +616,23 @@
 
       if (r._detailsLoaded) {
         // Fonte confiável: veio do route-detail
-        failed        += r._insucessoReal || 0;
-        transferidos  += r._transferidos  || 0;
-        naoAgencia    += r._naoAgencia    || 0;
-        foraDS        += r._foraDS        || 0;
+        failed       += r._insucessoReal || 0;
+        transferidos += r._transferidos  || 0;
+        naoAgencia   += r._naoAgencia    || 0;
+        foraDS       += r._foraDS        || 0;
       } else {
-        // Fallback: usa r.failed do get-routes-list (menos preciso, inclui pendentes/transferidos)
+        // Fallback: usa r.failed da API (bruto, inclui pendentes/transferidos)
         failed += r.failed || 0;
       }
     });
 
-    // Base do DS: total - pendentes - fora do DS (transferidos + não estão na agência)
     var baseDS = Math.max(0, total - pending - foraDS);
     var dsPct = baseDS > 0 ? (delivered / baseDS) * 100 : 0;
 
     return {
-      total: total,
-      delivered: delivered,
-      failed: failed,           // Só insucessos REAIS (que contam no DS)
-      pnr: pnr,
-      pending: pending,
-      transferidos: transferidos,
-      naoAgencia: naoAgencia,
-      foraDS: foraDS,           // transferidos + naoAgencia
-      pctACaminho: pctACaminho,
-      baseDS: baseDS,
-      dsPct: dsPct
+      total: total, delivered: delivered, failed: failed, pnr: pnr,
+      pending: pending, transferidos: transferidos, naoAgencia: naoAgencia,
+      foraDS: foraDS, pctACaminho: pctACaminho, baseDS: baseDS, dsPct: dsPct
     };
   }
 
@@ -1614,30 +1598,23 @@
   function renderInsucessos() {
     var allRoutes = applyGlobalFilters(STATE.routes || [])
       .filter(function (r) { return r.status !== 'A caminho do destino'; });
-    // Uma rota entra na lista se:
-    //  - Já teve details carregados E tem insucesso real (>0), OU
-    //  - Ainda não teve details E API disse que tem failed >0 (mostra enquanto carrega)
-    var routes = allRoutes.filter(function (r) {
-      if (r._detailsLoaded) return (r._insucessoReal || 0) > 0;
-      return (r.failed || 0) > 0;
-    });
-    routes.sort(function (a, b) {
-      var aVal = a._detailsLoaded ? (a._insucessoReal || 0) : (a.failed || 0);
-      var bVal = b._detailsLoaded ? (b._insucessoReal || 0) : (b.failed || 0);
-      return bVal - aVal;
-    });
+
+    // Helper: pega o número de insucessos da rota (real se carregou, bruto senão)
+    function getInsuc(r) {
+      return r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
+    }
+
+    var routes = allRoutes.filter(function (r) { return getInsuc(r) > 0; });
+    routes.sort(function (a, b) { return getInsuc(b) - getInsuc(a); });
 
     var totalInsucessos = 0;
-    routes.forEach(function (r) {
-      totalInsucessos += r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
-    });
+    routes.forEach(function (r) { totalInsucessos += getInsuc(r); });
 
-    // === CONTAGEM DE MOTIVOS (só os insucessos REAIS) ===
+    // === CONTAGEM DE MOTIVOS (só reais, pula fora-do-DS) ===
     var motivosCount = {};
     var totalComMotivo = 0;
     routes.forEach(function (r) {
       (r.failures || []).forEach(function (f) {
-        // Pula motivos "fora do DS" (transferidos, não estão na agência)
         if (isInsucessoForaDoDS(f.reason)) return;
         var m = f.reason || 'Sem motivo';
         motivosCount[m] = (motivosCount[m] || 0) + 1;
@@ -1648,19 +1625,17 @@
       return { motivo: k, qtd: motivosCount[k] };
     }).sort(function (a, b) { return b.qtd - a.qtd; });
 
-    // Conta rotas ainda pendentes de carregamento
+    // Rotas ainda aguardando detail
     var pendentesDetail = routes.filter(function (r) { return !r._detailsLoaded; }).length;
-    var carregadas = routes.length - pendentesDetail;
 
+    // === HEADER ===
     var subInfo = fmt(totalInsucessos) + ' pacotes em ' + routes.length + ' rotas';
     if (pendentesDetail > 0) {
-      subInfo += ' · <span style="color:' + T.warn + '">⏳ ' + pendentesDetail +
-                 ' aguardando detalhes</span>';
+      subInfo += ' · <span style="color:' + T.warn + '">' + pendentesDetail + ' aguardando</span>';
     }
     if (totalComMotivo > 0) {
-      subInfo += ' · ' + totalComMotivo + ' motivos identificados';
+      subInfo += ' · ' + totalComMotivo + ' com motivo';
     }
-
     dataArea.appendChild(mk('div',
       'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:10px',
       'Insucessos <span style="color:' + T.muted + ';font-size:11px">(' + subInfo + ')</span>'));
@@ -1673,7 +1648,7 @@
       return;
     }
 
-    // === CARD TOP MOTIVOS (NOVO) ===
+    // === CARD TOP MOTIVOS ===
     if (motivosArr.length > 0) {
       var motivosCard = mk('div',
         'background:' + T.surface + ';border:1px solid ' + T.border +
@@ -1683,39 +1658,34 @@
         '🎯 Motivos de Insucesso (' + motivosArr.length + ' distintos)'));
 
       var mTbl = mk('table', 'width:100%;border-collapse:separate;border-spacing:0;font-size:12px');
-      var mThead = mk('thead'); var mTrh = mk('tr');
+      var mThead = mk('thead');
+      var mTrh = mk('tr');
       ['#', 'Motivo', 'Qtd', '% do total', 'Barra'].forEach(function (h) {
         mTrh.appendChild(mk('th',
           'padding:8px 10px;text-align:left;font-size:10px;color:' + T.muted +
           ';font-weight:600;text-transform:uppercase;border-bottom:1px solid ' + T.border, h));
       });
-      mThead.appendChild(mTrh); mTbl.appendChild(mThead);
+      mThead.appendChild(mTrh);
+      mTbl.appendChild(mThead);
       var mTbody = mk('tbody');
       var maxQtd = motivosArr[0].qtd;
       motivosArr.forEach(function (m, i) {
         var tr = mk('tr');
         var color = i === 0 ? T.err : i < 3 ? T.warn : T.mutedHi;
-        var pct = totalComMotivo > 0 ? ((m.qtd / totalComMotivo) * 100) : 0;
+        var pctM = totalComMotivo > 0 ? ((m.qtd / totalComMotivo) * 100) : 0;
         var barPct = maxQtd > 0 ? (m.qtd / maxQtd) * 100 : 0;
-        var foraDS = isInsucessoForaDoDS(m.motivo);
         tr.appendChild(mk('td',
           'padding:8px 10px;color:' + color + ';font-family:' + T.fMono +
           ';font-weight:700;border-bottom:1px solid ' + T.border, '#' + (i + 1)));
-        var motivoCell = escapeHTML(m.motivo);
-        if (foraDS) {
-          motivoCell += ' <span style="background:rgba(148,163,184,.2);color:' + T.muted +
-            ';font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;' +
-            'margin-left:6px">FORA DO DS</span>';
-        }
         tr.appendChild(mk('td',
           'padding:8px 10px;color:' + T.textHi + ';border-bottom:1px solid ' + T.border,
-          motivoCell));
+          escapeHTML(m.motivo)));
         tr.appendChild(mk('td',
           'padding:8px 10px;color:' + T.err + ';font-family:' + T.fMono +
           ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(m.qtd)));
         tr.appendChild(mk('td',
           'padding:8px 10px;color:' + T.mutedHi + ';font-family:' + T.fMono +
-          ';border-bottom:1px solid ' + T.border, pct.toFixed(1) + '%'));
+          ';border-bottom:1px solid ' + T.border, pctM.toFixed(1) + '%'));
         var barTd = mk('td',
           'padding:8px 10px;border-bottom:1px solid ' + T.border + ';width:140px');
         var barWrap = mk('div',
@@ -1730,28 +1700,14 @@
       motivosCard.appendChild(mTbl);
       dataArea.appendChild(motivosCard);
     } else if (pendentesDetail > 0) {
-      // Aviso só se realmente ainda falta carregar
-      var prog = STATE.loadProgress;
-      var progInfo = '';
-      if (prog && prog.active && prog.total > 0) {
-        progInfo = ' (' + prog.current + '/' + prog.total + ')';
-      }
       dataArea.appendChild(mk('div',
         'background:' + T.surface + ';border:1px solid ' + T.border +
         ';border-left:3px solid ' + T.info + ';border-radius:10px;padding:10px 14px;' +
         'margin-bottom:14px;font-size:11px;color:' + T.mutedHi,
-        '⏳ Carregando motivos de insucesso' + progInfo +
-        '... (aguarde alguns segundos após a busca)'));
-    } else if (motivosArr.length === 0) {
-      // Todos carregados mas nenhum motivo — improvável mas possível
-      dataArea.appendChild(mk('div',
-        'background:' + T.surface + ';border:1px solid ' + T.border +
-        ';border-left:3px solid ' + T.ok + ';border-radius:10px;padding:10px 14px;' +
-        'margin-bottom:14px;font-size:11px;color:' + T.mutedHi,
-        '✓ Nenhum motivo detalhado registrado para essas rotas.'));
+        '⏳ Carregando motivos... (' + pendentesDetail + ' rotas restantes)'));
     }
 
-    // === TOP 10 ROTAS COM MAIS INSUCESSOS ===
+    // === TOP 10 ROTAS ===
     var top10 = routes.slice(0, 10);
     var topCard = mk('div',
       'background:' + T.surface + ';border:1px solid ' + T.border +
@@ -1760,19 +1716,21 @@
       'font-size:12px;font-weight:600;color:' + T.textHi + ';margin-bottom:8px',
       '🔥 TOP 10 Rotas com Mais Insucessos'));
 
-    var tbl = mk('table',
-      'width:100%;border-collapse:separate;border-spacing:0;font-size:12px');
-    var thead = mk('thead'); var trh = mk('tr');
+    var tbl = mk('table', 'width:100%;border-collapse:separate;border-spacing:0;font-size:12px');
+    var thead = mk('thead');
+    var trh = mk('tr');
     ['#', 'Rota', 'Motorista', 'Carrier', 'Insucessos', '% do Total'].forEach(function (h) {
       trh.appendChild(mk('th',
         'padding:8px 10px;text-align:left;font-size:10px;color:' + T.muted +
         ';font-weight:600;text-transform:uppercase;border-bottom:1px solid ' + T.border, h));
     });
-    thead.appendChild(trh); tbl.appendChild(thead);
+    thead.appendChild(trh);
+    tbl.appendChild(thead);
     var tbody = mk('tbody');
     top10.forEach(function (r, i) {
       var tr = mk('tr');
       var color = i === 0 ? T.err : i < 3 ? T.warn : T.mutedHi;
+      var insucR = getInsuc(r);
       tr.appendChild(mk('td',
         'padding:8px 10px;color:' + color + ';font-family:' + T.fMono +
         ';font-weight:700;border-bottom:1px solid ' + T.border, '#' + (i + 1)));
@@ -1785,7 +1743,6 @@
       tr.appendChild(mk('td',
         'padding:8px 10px;color:' + T.muted + ';font-family:' + T.fMono +
         ';font-size:11px;border-bottom:1px solid ' + T.border, escapeHTML(r.carrier || '—')));
-      var insucR = r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
       tr.appendChild(mk('td',
         'padding:8px 10px;color:' + T.err + ';font-family:' + T.fMono +
         ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(insucR)));
@@ -1826,17 +1783,18 @@
         { key: 'motivo', label: 'Motivo' }, { key: 'endereco', label: 'Endereço' }
       ], 'Insucessos — ' + STATE.ssc + ' — ' + STATE.date));
 
-    // === LISTA COMPLETA DE ROTAS ===
+    // === LISTA COMPLETA ===
     dataArea.appendChild(mk('div',
       'font-size:12px;font-weight:600;color:' + T.textHi + ';margin:14px 0 8px 0',
       '📋 Todas as rotas com insucesso (' + routes.length + ')'));
 
     var grid = mk('div', 'display:flex;flex-direction:column;gap:8px');
     routes.forEach(function (r) {
+      var insucRota = getInsuc(r);
       var card = mk('div',
         'background:' + T.surface + ';border:1px solid ' + T.border + ';border-radius:8px;' +
         'padding:10px 12px;border-left:3px solid ' +
-        ((r.failed || 0) > 5 ? T.err : (r.failed || 0) > 2 ? T.warn : T.info));
+        (insucRota > 5 ? T.err : insucRota > 2 ? T.warn : T.info));
       var head = mk('div', 'display:flex;align-items:center;gap:12px;flex-wrap:wrap');
       head.appendChild(mk('div',
         'font-family:' + T.fMono + ';font-size:12px;font-weight:600;color:' + T.textHi,
@@ -1846,14 +1804,14 @@
       head.appendChild(mk('div',
         'font-size:10px;color:' + T.muted + ';font-family:' + T.fMono,
         escapeHTML(r.carrier || '—')));
-      var insucRota = r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
+      var badgeTxt = fmt(insucRota) + ' insuc.';
+      if (!r._detailsLoaded) badgeTxt += ' ⏳';
       head.appendChild(mk('span',
         'background:rgba(239,68,68,.15);color:' + T.err + ';font-size:11px;font-weight:700;' +
         'padding:2px 10px;border-radius:10px;font-family:' + T.fMono + ';margin-left:auto',
-        fmt(insucRota) + ' insuc.'));
+        badgeTxt));
       card.appendChild(head);
 
-      // Se tem motivos carregados, mostra breakdown
       if (r.failures && r.failures.length > 0) {
         var motivosRota = {};
         r.failures.forEach(function (f) {
@@ -1863,14 +1821,15 @@
           'margin-top:6px;padding-top:6px;border-top:1px dashed ' + T.border +
           ';display:flex;flex-wrap:wrap;gap:6px;font-size:10px');
         Object.keys(motivosRota).forEach(function (m) {
+          var isFora = isInsucessoForaDoDS(m);
           motivosLine.appendChild(mk('span',
-            'background:rgba(239,68,68,.1);color:' + T.err +
+            'background:' + (isFora ? 'rgba(148,163,184,.15)' : 'rgba(239,68,68,.1)') +
+            ';color:' + (isFora ? T.muted : T.err) +
             ';padding:2px 8px;border-radius:10px;font-weight:600',
-            escapeHTML(m) + ': ' + motivosRota[m]));
+            escapeHTML(m) + ': ' + motivosRota[m] + (isFora ? ' (fora DS)' : '')));
         });
         card.appendChild(motivosLine);
       }
-
       grid.appendChild(card);
     });
     dataArea.appendChild(grid);
@@ -3720,69 +3679,31 @@ function updateCountdown() {
     var failures = [];
     var stops = (detail && detail.stops) || [];
     stops.forEach(function (stop) {
-      var orders = stop.orders || [];
-      orders.forEach(function (order) {
-        var tus = order.transportUnits || [];
-        tus.forEach(function (tu) {
-          var reason = tu.incidentDescription || tu.description || tu.reason || '';
-          reason = String(reason).trim();
-          var subst = (tu.relatedEntity && tu.relatedEntity.substatus) || '';
+      (stop.orders || []).forEach(function (order) {
+        (order.transportUnits || []).forEach(function (tu) {
+          var reason = String(tu.incidentDescription || '').trim();
+          var subst = String((tu.relatedEntity && tu.relatedEntity.substatus) || '').toLowerCase();
           var stAtus = String(tu.status || '').toLowerCase();
-          var subLow = String(subst).toLowerCase();
 
-          // ============================================================
-          // REGRA RIGOROSA: só inclui como "failure" se for CONFIRMADAMENTE
-          // uma não-entrega (com motivo explícito).
-          // Pacotes PENDING/planejados/aguardando NÃO são insucessos.
-          // ============================================================
-
-          // Status que indicam ENTREGA — pular
-          if (stAtus === 'delivered' || subLow.indexOf('delivered') >= 0) {
+          // ENTREGUE — pula
+          if (stAtus === 'delivered' || subst === 'delivered' || subst.indexOf('delivered') >= 0) {
             return;
           }
 
-          // Status que indicam PENDENTE (ainda vai ser entregue) — pular
-          if (stAtus === 'pending' || stAtus === 'to_be_visited' ||
-              stAtus === 'to_visit' || stAtus === 'planned' ||
-              subLow.indexOf('pending') >= 0 ||
-              subLow.indexOf('to_be_visited') >= 0 ||
-              subLow.indexOf('to_visit') >= 0 ||
-              subLow.indexOf('planned') >= 0 ||
-              subLow.indexOf('on_way') >= 0 ||
-              subLow.indexOf('in_transit') >= 0) {
-            return;
-          }
+          // Sem incidentDescription = pacote pendente/aguardando — pula
+          // (o ML só preenche incidentDescription quando há OCORRÊNCIA real)
+          if (!reason) return;
 
-          // Só considera INSUCESSO se tiver incidentDescription (motivo explícito)
-          // OU substatus que indica falha confirmada
-          var falhaConfirmada = (
-            subLow.indexOf('not_delivered') >= 0 ||
-            subLow.indexOf('not_visited') >= 0 ||
-            subLow.indexOf('failed') >= 0 ||
-            subLow.indexOf('incident') >= 0 ||
-            subLow.indexOf('transferred') >= 0 ||
-            subLow.indexOf('refused') >= 0 ||
-            subLow.indexOf('absent') >= 0 ||
-            stAtus === 'not_delivered' ||
-            stAtus === 'failed' ||
-            stAtus === 'incident' ||
-            stAtus === 'transferred'
-          );
-
-          // Só entra na lista se:
-          // - Tem motivo (incidentDescription) — significa que teve ocorrência
-          // - OU tem falha confirmada pelo substatus
-          if (reason || falhaConfirmada) {
-            failures.push({
-              packageId: tu.printedLabel || (tu.relatedEntity && tu.relatedEntity.id) || '',
-              shipmentId: tu.relatedEntity && tu.relatedEntity.id,
-              reason: reason || subst || tu.status || 'Motivo não informado',
-              status: tu.status,
-              substatus: subst,
-              address: stop.stopAddress || '',
-              sequence: stop.sequence
-            });
-          }
+          // Tem motivo — é uma ocorrência
+          failures.push({
+            packageId: tu.printedLabel || (tu.relatedEntity && tu.relatedEntity.id) || '',
+            shipmentId: tu.relatedEntity && tu.relatedEntity.id,
+            reason: reason,
+            status: tu.status,
+            substatus: subst,
+            address: stop.stopAddress || '',
+            sequence: stop.sequence
+          });
         });
       });
     });
@@ -3790,13 +3711,9 @@ function updateCountdown() {
   }
 
   // Busca detalhes em batches paralelos (max 5 concorrentes)
+  // Busca detalhes em batches paralelos com retry anti-429
+  // Busca detalhes em batches paralelos com retry anti-429
   function fetchAllFailures(routesWithFailures) {
-    var BATCH_SIZE = 1;  // 1 por vez pra evitar completamente o 429
-    var results = [];
-    var idx = 0;
-    var total = routesWithFailures.length;
-
-    function fetchAllFailures(routesWithFailures) {
     var BATCH_SIZE = 3;   // 3 requests em paralelo
     var results = [];
     var idx = 0;
@@ -3827,13 +3744,12 @@ function updateCountdown() {
         // Feedback ao vivo a cada batch
         try {
           renderKPIs();
-          // Se está na aba insucessos, re-renderiza pra mostrar progresso
           if (STATE.tab === 'INSUCESSOS' && !STATE.ui.openDropdown) {
             renderDataOnly();
           }
         } catch (e) {}
 
-        // Se 3 batches seguidos falharam, aumenta throttle e continua
+        // Se 6 batches seguidos falharam, aumenta throttle e continua
         if (falhasSeguidas >= 6) {
           console.warn('[MLM] Muitas falhas seguidas, aumentando throttle');
           MIN_INTERVAL_MS = Math.min(2000, MIN_INTERVAL_MS * 2);
