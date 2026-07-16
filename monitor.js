@@ -2582,74 +2582,28 @@
   }
 
   function openFechamentoModal() {
-    // Aplica filtros globais E descarta "A caminho do destino"
-    var routes = applyGlobalFilters(STATE.routes || [])
-      .filter(function (r) { return r.status !== 'A caminho do destino'; });
-    var stats = getDSStats(routes);
-    var g = STATE.globalFilters;
-    var hasFilters = g.status.size + g.tipo.size + g.modal.size + g.carrier.size +
-                     g.driver.size + g.ciclo.size + g.origem.size > 0 || g.placa;
-    var total = stats.total, delivered = stats.delivered;
-    var failed = stats.failed, pnr = stats.pnr, foraDS = stats.foraDS;
-    var dsPct = stats.dsPct.toFixed(2);
-    var finished = 0, running = 0;
-    routes.forEach(function (r) {
-      if (r.status === 'FINISHED' || r.status === 'FINALIZADA' || r.status === 'Encerradas') finished++;
-      else if (r.status === 'IN_PROGRESS' || r.status === 'RUNNING' || r.status === 'Abertas') running++;
-    });
-    var pendentes = Math.max(0, total - delivered - failed - foraDS);
+    var modal = openModal({ title: 'Gerar Fechamento Consolidado', width: '860px' });
 
-    // Top 5 ofensoras
-    var top5 = routes.slice().filter(function (r) {
-      return (r.failed || 0) > 0 || (r.pnr || 0) > 0;
-    }).sort(function (a, b) {
-      return ((b.failed || 0) + (b.pnr || 0)) - ((a.failed || 0) + (a.pnr || 0));
-    }).slice(0, 5);
+    // Estado interno do modal
+    var consolidatedData = null;  // { SRJ3: [...], ERJ2: [...], ERJ5: [...] }
+    var loading = false;
 
-    // Top 5 motivos (descontando "fora do DS")
-    var motivosMap = {};
-    routes.forEach(function (r) {
-      (r.failures || []).forEach(function (f) {
-        if (isInsucessoForaDoDS(f.reason)) return;
-        var m = f.reason || 'Sem motivo';
-        motivosMap[m] = (motivosMap[m] || 0) + 1;
-      });
-    });
-    var topMotivos = Object.keys(motivosMap).map(function (k) {
-      return { motivo: k, qtd: motivosMap[k] };
-    }).sort(function (a, b) { return b.qtd - a.qtd; }).slice(0, 5);
+    // === TOP: botão consolidar + status ===
+    var topBar = mk('div',
+      'display:flex;gap:10px;align-items:center;margin-bottom:14px;padding:12px;' +
+      'background:' + T.surface + ';border:1px solid ' + T.border + ';border-radius:10px');
+    var btnConsolidar = mk('button', '',
+      '<span id="mlm_fech_btn_icon">🔄</span><span id="mlm_fech_btn_lbl">Consolidar SRJ3 + ERJ2 + ERJ5</span>');
+    btnConsolidar.style.cssText = 'background:' + T.grad + ';border:none;color:#fff;padding:10px 18px;' +
+      'border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;' +
+      'align-items:center;gap:8px';
+    var statusLbl = mk('div',
+      'font-size:11px;color:' + T.muted + ';font-family:' + T.fMono + ';flex:1',
+      'Clique em consolidar para buscar dados das 3 origens.');
+    topBar.appendChild(btnConsolidar);
+    topBar.appendChild(statusLbl);
+    modal.body.appendChild(topBar);
 
-    // Performance por transportadora
-    var byCarrier = {};
-    routes.forEach(function (r) {
-      var c = r.carrier || '—';
-      if (!byCarrier[c]) byCarrier[c] = { total: 0, delivered: 0, failed: 0, foraDS: 0, routes: 0 };
-      var b = byCarrier[c];
-      b.total += r.totalPkg || 0;
-      b.delivered += r.delivered || 0;
-      b.routes++;
-      (r.failures || []).forEach(function (f) {
-        if (isInsucessoForaDoDS(f.reason)) b.foraDS++;
-        else b.failed++;
-      });
-      if (!r.failures || r.failures.length === 0) b.failed += r.failed || 0;
-    });
-    var carriersArr = Object.keys(byCarrier).map(function (k) {
-      var b = byCarrier[k];
-      var base = b.total - b.foraDS;
-      b.dsPct = base > 0 ? (b.delivered / base) * 100 : 0;
-      b.name = k;
-      return b;
-    }).sort(function (a, b) { return b.dsPct - a.dsPct; });
-
-    var d = new Date(STATE.date + 'T12:00:00');
-    var dataFmt = pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear();
-    var now = new Date();
-    var horaFmt = pad(now.getHours()) + ':' + pad(now.getMinutes());
-
-    var dsEmoji = stats.dsPct >= 95 ? '🟢' : stats.dsPct >= 90 ? '🟡' : '🔴';
-
-    var modal = openModal({ title: 'Gerar Fechamento', width: '820px' });
     var grid = mk('div', 'display:grid;grid-template-columns:1fr 1fr;gap:16px');
     modal.body.appendChild(grid);
     var form = mk('div', 'display:flex;flex-direction:column;gap:10px');
@@ -2686,93 +2640,341 @@
       'background:' + T.surface + ';border:1px solid ' + T.border + ';border-radius:10px;' +
       'padding:12px;font-family:' + T.fMono + ';font-size:11px;color:' + T.mutedHi +
       ';line-height:1.6;white-space:pre-wrap;max-height:520px;overflow-y:auto');
+    preview.textContent = 'Aguardando consolidação dos dados...';
     grid.appendChild(preview);
 
+    // === FUNÇÃO: busca rotas de UM SSC específico ===
+    function fetchRoutesFromSSC(sscId) {
+      var allRoutes = [];
+      function loop(page) {
+        return throttledFetch(API_URL, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            serviceCenterId: sscId,
+            siteId: 'MLB',
+            page: page,
+            pageSize: 50,
+            order_by: 'performance'
+          })
+        }).then(function (resp) { return resp.json(); }).then(function (data) {
+          var routes = (data && data.routes) || [];
+          allRoutes = allRoutes.concat(routes);
+          var pag = data && data.pagination;
+          if (pag && pag.hasNext && page < 25) {
+            return loop(page + 1);
+          }
+          // Deduplica
+          var seen = {}, deduped = [];
+          allRoutes.forEach(function (r) {
+            var rid = String(r.id || '');
+            if (rid && seen[rid]) return;
+            seen[rid] = true;
+            deduped.push(r);
+          });
+          return deduped.map(mapRoute);
+        });
+      }
+      return loop(1);
+    }
+
+    // === FUNÇÃO: consolida os 3 SSCs ===
+    function doConsolidate() {
+      if (loading) return;
+      loading = true;
+      btnConsolidar.disabled = true;
+      btnConsolidar.style.opacity = '0.6';
+      document.getElementById('mlm_fech_btn_icon').textContent = '⏳';
+      document.getElementById('mlm_fech_btn_lbl').textContent = 'Buscando...';
+      statusLbl.textContent = 'Buscando SRJ3, ERJ2 e ERJ5 em paralelo...';
+      statusLbl.style.color = T.brand2;
+
+      var startedAt = Date.now();
+      Promise.all([
+        fetchRoutesFromSSC('SRJ3').catch(function (e) { console.warn('SRJ3 falhou', e); return []; }),
+        fetchRoutesFromSSC('ERJ2').catch(function (e) { console.warn('ERJ2 falhou', e); return []; }),
+        fetchRoutesFromSSC('ERJ5').catch(function (e) { console.warn('ERJ5 falhou', e); return []; })
+      ]).then(function (results) {
+        consolidatedData = {
+          SRJ3: results[0],
+          ERJ2: results[1],
+          ERJ5: results[2]
+        };
+        var total = results[0].length + results[1].length + results[2].length;
+        var elapsed = Date.now() - startedAt;
+        statusLbl.innerHTML = '✅ <b style="color:' + T.ok + '">' + total + ' rotas</b> · ' +
+          'SRJ3: ' + results[0].length + ' · ERJ2: ' + results[1].length +
+          ' · ERJ5: ' + results[2].length + ' · <span style="color:' + T.muted + '">' +
+          elapsed + 'ms</span>';
+        document.getElementById('mlm_fech_btn_icon').textContent = '🔄';
+        document.getElementById('mlm_fech_btn_lbl').textContent = 'Atualizar consolidação';
+        btnConsolidar.disabled = false;
+        btnConsolidar.style.opacity = '1';
+        loading = false;
+
+        // Busca detalhes de insucessos das 3 origens (async, atualiza preview quando termina)
+        var comInsuc = [];
+        [].concat(results[0], results[1], results[2]).forEach(function (r) {
+          if ((r.failed || 0) > 0 && (!r.failures || r.failures.length === 0)) {
+            comInsuc.push(r);
+          }
+        });
+        if (comInsuc.length > 0) {
+          statusLbl.innerHTML += ' · <span style="color:' + T.warn + '">🔍 buscando motivos de ' +
+            comInsuc.length + ' rotas...</span>';
+          fetchAllFailures(comInsuc).then(function () {
+            statusLbl.innerHTML = statusLbl.innerHTML.replace(/🔍.*$/, '🎯 motivos carregados');
+            refresh();
+          });
+        }
+        refresh();
+      }).catch(function (err) {
+        statusLbl.textContent = '❌ Erro: ' + err.message;
+        statusLbl.style.color = T.err;
+        btnConsolidar.disabled = false;
+        btnConsolidar.style.opacity = '1';
+        loading = false;
+        document.getElementById('mlm_fech_btn_icon').textContent = '⚠️';
+        document.getElementById('mlm_fech_btn_lbl').textContent = 'Tentar novamente';
+      });
+    }
+
+    btnConsolidar.onclick = doConsolidate;
+
+    // === MONTA O TEXTO FINAL ===
     function buildText() {
+      if (!consolidatedData) {
+        return 'Clique em "Consolidar SRJ3 + ERJ2 + ERJ5" para gerar o fechamento.';
+      }
+
+      var sep = '━━━━━━━━━━━━━━━';
+      var d = new Date(STATE.date + 'T12:00:00');
+      var dataFmt = pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear();
+      var now = new Date();
+      var horaFmt = pad(now.getHours()) + ':' + pad(now.getMinutes());
+
+      // Junta tudo pra análise geral (descartando "A caminho do destino")
+      var allRoutes = []
+        .concat(consolidatedData.SRJ3 || [])
+        .concat(consolidatedData.ERJ2 || [])
+        .concat(consolidatedData.ERJ5 || [])
+        .filter(function (r) { return r.status !== 'A caminho do destino'; });
+
+      // === BLOCOS POR ORIGEM/CARRIER ===
+      var srj3Routes = allRoutes.filter(function (r) { return r.origem === 'SRJ3'; });
+      var erj2Routes = allRoutes.filter(function (r) { return r.origem === 'ERJ2'; });
+      var erj5Routes = allRoutes.filter(function (r) { return r.origem === 'ERJ5'; });
+      var meeRoutes  = allRoutes.filter(function (r) {
+        return String(r.carrier || '').toLowerCase().indexOf('envios extra') >= 0;
+      });
+
+      var statsGeral = getDSStats(allRoutes);
+      var statsSRJ3  = getDSStats(srj3Routes);
+      var statsERJ2  = getDSStats(erj2Routes);
+      var statsERJ5  = getDSStats(erj5Routes);
+      var statsMEE   = getDSStats(meeRoutes);
+
+      function emojiDS(pct) {
+        return pct >= 99 ? '🟢' : pct >= 97 ? '🟡' : '🔴';
+      }
+
       var t = '';
-      t += '╔══════════════════════════════════════════╗\n';
-      t += '║  FECHAMENTO ' + STATE.ssc + ' • ' + dataFmt + '            \n';
-      t += '╚══════════════════════════════════════════╝\n\n';
-      t += '📅 Gerado em: ' + dataFmt + ' às ' + horaFmt + '\n';
-      if (inpOperador.value) t += '👤 Operador: ' + inpOperador.value + '\n';
-      if (hasFilters) t += '⚙️ Filtros aplicados — ' + routes.length + ' rotas no escopo\n';
+
+      // === HEADER ===
+      t += '📊 *FECHAMENTO — ' + dataFmt + '*\n';
+      t += '_Gerado às ' + horaFmt + '_\n';
+      if (inpOperador.value) t += '👤 ' + inpOperador.value + '\n';
       t += '\n';
 
-      t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-      t += '📊 INDICADORES GERAIS\n';
-      t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-      t += '  📦 Total de Pacotes: ' + fmt(total) + '\n';
-      t += '  ✅ Entregues:        ' + fmt(delivered) + '\n';
-      t += '  ⏳ Pendentes:        ' + fmt(pendentes) + '\n';
-      t += '  🔴 Insucessos:       ' + fmt(failed) + '\n';
-      if (foraDS > 0) {
-        t += '  ⚪ Fora do DS:       ' + fmt(foraDS) + '  (não contabilizados)\n';
+      // === DS GERAL ===
+      t += sep + '\n';
+      t += '🎯 *DS GERAL: ' + statsGeral.dsPct.toFixed(2) + '%*\n';
+      t += fmt(statsGeral.failed) + ' insucessos\n';
+      t += sep + '\n';
+      if (srj3Routes.length > 0) {
+        t += emojiDS(statsSRJ3.dsPct) + ' *SRJ3* — ' + statsSRJ3.dsPct.toFixed(2) +
+             '% · ' + fmt(statsSRJ3.failed) + ' ins.\n';
       }
-      t += '  🟡 PNR:              ' + fmt(pnr) + '\n\n';
-      t += '  🎯 DS Operacional:   ' + dsEmoji + ' ' + dsPct + '%\n';
-      if (foraDS > 0) {
-        t += '     (base ajustada: ' + fmt(stats.baseDS) + ' pacotes)\n';
+      if (erj2Routes.length > 0) {
+        t += emojiDS(statsERJ2.dsPct) + ' *ERJ2* — ' + statsERJ2.dsPct.toFixed(2) +
+             '% · ' + fmt(statsERJ2.failed) + ' ins.\n';
+      }
+      if (erj5Routes.length > 0) {
+        t += emojiDS(statsERJ5.dsPct) + ' *ERJ5* — ' + statsERJ5.dsPct.toFixed(2) +
+             '% · ' + fmt(statsERJ5.failed) + ' ins.\n';
+      }
+      if (meeRoutes.length > 0) {
+        t += emojiDS(statsMEE.dsPct) + ' *MEE (Envios Extra)* — ' + statsMEE.dsPct.toFixed(2) +
+             '% · ' + fmt(statsMEE.failed) + ' ins.\n';
       }
       t += '\n';
 
-      t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-      t += '🛣️  STATUS DAS ROTAS\n';
-      t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-      t += '  Total de Rotas:    ' + routes.length + '\n';
-      t += '  ✅ Encerradas:     ' + finished + ' (' +
-           (routes.length > 0 ? ((finished / routes.length) * 100).toFixed(0) : 0) + '%)\n';
-      t += '  🔄 Em andamento:   ' + running + '\n\n';
+      // === INDICADORES SRJ3 (detalhado — é o galpão principal) ===
+      t += sep + '\n';
+      t += '📦 *SRJ3 — INDICADORES*\n';
+      t += sep + '\n';
+      var pendSRJ3 = Math.max(0, statsSRJ3.total - statsSRJ3.delivered - statsSRJ3.failed - statsSRJ3.foraDS);
+      t += '• Total: ' + fmt(statsSRJ3.total) + '\n';
+      t += '• Entregues: ' + fmt(statsSRJ3.delivered) + ' ✅\n';
+      t += '• Pendentes: ' + fmt(pendSRJ3) + ' ⏳\n';
+      t += '• Insucessos: ' + fmt(statsSRJ3.failed) + ' 🔴\n';
+      if (statsSRJ3.foraDS > 0) t += '• Fora do DS: ' + fmt(statsSRJ3.foraDS) + ' ⚪\n';
+      t += '• PNR: ' + fmt(statsSRJ3.pnr) + ' 🟡\n';
+      t += '\n';
+      t += '🎯 *DS Operacional: ' + statsSRJ3.dsPct.toFixed(2) + '%* ' + emojiDS(statsSRJ3.dsPct) + '\n';
+      if (statsSRJ3.foraDS > 0) t += '_(base ajustada: ' + fmt(statsSRJ3.baseDS) + ' pkg)_\n';
+      t += '\n';
+
+      // === ROTAS SRJ3 ===
+      var finSRJ3 = 0, runSRJ3 = 0;
+      srj3Routes.forEach(function (r) {
+        if (r.status === 'Encerradas') finSRJ3++;
+        else if (r.status === 'Abertas') runSRJ3++;
+      });
+      t += sep + '\n';
+      t += '🛣️ *ROTAS SRJ3*\n';
+      t += sep + '\n';
+      t += '• Total: ' + srj3Routes.length + '\n';
+      var pctFin = srj3Routes.length > 0 ? Math.round((finSRJ3 / srj3Routes.length) * 100) : 0;
+      t += '• Encerradas: ' + finSRJ3 + ' (' + pctFin + '%) ✅\n';
+      t += '• Em andamento: ' + runSRJ3 + ' 🔄\n';
+      t += '\n';
+
+      // === TRANSPORTADORAS (agregando SRJ3 apenas — pra não bagunçar) ===
+      var byCarrier = {};
+      srj3Routes.forEach(function (r) {
+        var c = r.carrier || '—';
+        if (!byCarrier[c]) byCarrier[c] = { total: 0, delivered: 0, failed: 0, foraDS: 0, routes: 0 };
+        var b = byCarrier[c];
+        b.total += r.totalPkg || 0;
+        b.delivered += r.delivered || 0;
+        b.routes++;
+        if (r._detailsLoaded) {
+          b.failed += r._insucessoReal || 0;
+          b.foraDS += r._foraDS || 0;
+        } else {
+          b.failed += r.failed || 0;
+        }
+      });
+      var carriersArr = Object.keys(byCarrier).map(function (k) {
+        var b = byCarrier[k];
+        var base = b.total - b.foraDS;
+        b.dsPct = base > 0 ? (b.delivered / base) * 100 : 0;
+        b.name = k;
+        return b;
+      }).sort(function (a, b) { return b.dsPct - a.dsPct; });
 
       if (carriersArr.length > 0) {
-        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-        t += '🏢 DESEMPENHO POR TRANSPORTADORA\n';
-        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-        carriersArr.forEach(function (c, i) {
-          var em = c.dsPct >= 95 ? '🟢' : c.dsPct >= 90 ? '🟡' : '🔴';
-          t += '  ' + em + ' ' + c.name + '\n';
-          t += '     Rotas: ' + c.routes + ' · Pacotes: ' + fmt(c.total) +
-               ' · DS: ' + c.dsPct.toFixed(1) + '% · Insuc: ' + c.failed + '\n';
+        t += sep + '\n';
+        t += '🏢 *TRANSPORTADORAS (SRJ3)*\n';
+        t += sep + '\n';
+        carriersArr.forEach(function (c) {
+          t += emojiDS(c.dsPct) + ' *' + c.name + '*\n';
+          t += c.dsPct.toFixed(1) + '% · ' + c.routes + ' rotas · ' +
+               fmt(c.total) + ' pkg · ' + c.failed + ' insuc\n\n';
         });
-        t += '\n';
       }
+
+      // === TOP 5 MOTIVOS (consolidado GERAL) ===
+      var motivosMap = {};
+      allRoutes.forEach(function (r) {
+        (r.failures || []).forEach(function (f) {
+          if (isInsucessoForaDoDS(f.reason)) return;
+          var m = f.reason || 'Sem motivo';
+          motivosMap[m] = (motivosMap[m] || 0) + 1;
+        });
+      });
+      var topMotivos = Object.keys(motivosMap).map(function (k) {
+        return { motivo: k, qtd: motivosMap[k] };
+      }).sort(function (a, b) { return b.qtd - a.qtd; }).slice(0, 5);
 
       if (topMotivos.length > 0) {
-        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-        t += '🔥 TOP 5 MOTIVOS DE INSUCESSO\n';
-        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        t += sep + '\n';
+        t += '🔥 *TOP 5 INSUCESSOS*\n';
+        t += sep + '\n';
+        var nums = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'];
         topMotivos.forEach(function (m, i) {
-          t += '  ' + (i + 1) + '. ' + m.motivo + ' — ' + m.qtd + '\n';
+          t += (nums[i] || (i + 1) + '.') + ' ' + m.motivo + ' — ' + m.qtd + '\n';
         });
         t += '\n';
       }
+
+      // === TOP 5 ROTAS OFENSORAS (GERAL) ===
+      var top5 = allRoutes.slice().filter(function (r) {
+        var ins = r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
+        return ins > 0;
+      }).sort(function (a, b) {
+        var ia = a._detailsLoaded ? (a._insucessoReal || 0) : (a.failed || 0);
+        var ib = b._detailsLoaded ? (b._insucessoReal || 0) : (b.failed || 0);
+        return ib - ia;
+      }).slice(0, 5);
 
       if (top5.length > 0) {
-        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-        t += '⚠️  TOP 5 ROTAS OFENSORAS\n';
-        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        t += sep + '\n';
+        t += '⚠️ *TOP 5 ROTAS OFENSORAS*\n';
+        t += sep + '\n';
         top5.forEach(function (r, i) {
-          t += '  ' + (i + 1) + '. ' + r.routeId + '\n';
-          t += '     👤 ' + (r.driver || '—') + '  ·  🏢 ' + (r.carrier || '—') + '\n';
-          t += '     🔴 Insuc: ' + (r.failed || 0) + '  ·  🟡 PNR: ' + (r.pnr || 0) +
-               '  ·  📦 ' + (r.totalPkg || 0) + ' pkg\n';
+          var ins = r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
+          t += (i + 1) + '. Rota ' + r.routeId + ' 🏢 ' + (r.carrier || '—') + '\n';
+          t += '👤 ' + (r.driver || '—') + '\n';
+          t += '🔴 ' + ins + ' insuc · 📦 ' + (r.totalPkg || 0) + ' pkg\n\n';
         });
-        t += '\n';
       }
 
+      // === NOTAS DO OPERADOR ===
       if (inpObs.value || inpAcoes.value || inpPendencia.value) {
-        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-        t += '📝 NOTAS DO OPERADOR\n';
-        t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-        if (inpObs.value)       t += '\n📌 Observações:\n' + inpObs.value + '\n';
-        if (inpAcoes.value)     t += '\n⚙️ Ações Tomadas:\n' + inpAcoes.value + '\n';
-        if (inpPendencia.value) t += '\n⏭️ Pendências / Follow-up:\n' + inpPendencia.value + '\n';
+        t += sep + '\n';
+        t += '📝 *NOTAS*\n';
+        t += sep + '\n';
+        if (inpObs.value)       t += '\n📌 *Observações:*\n' + inpObs.value + '\n';
+        if (inpAcoes.value)     t += '\n⚙️ *Ações tomadas:*\n' + inpAcoes.value + '\n';
+        if (inpPendencia.value) t += '\n⏭️ *Pendências:*\n' + inpPendencia.value + '\n';
         t += '\n';
       }
 
-      t += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-      t += 'Monitor Last Mile v' + APP.version + ' · ' + STATE.ssc + '\n';
+      t += sep + '\n';
+      t += '_Monitor Last Mile v' + APP.version + '_\n';
       return t;
     }
+
+    function refresh() { preview.textContent = buildText(); }
+    [inpOperador, inpObs, inpAcoes, inpPendencia].forEach(function (el) { el.oninput = refresh; });
+    refresh();
+
+    // === BOTÕES DO RODAPÉ ===
+    var btnCopiar = mk('button', '', ICON.copy + '<span>Copiar</span>');
+    btnCopiar.style.cssText = 'background:' + T.grad + ';border:none;color:#fff;padding:8px 16px;' +
+      'border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;' +
+      'align-items:center;gap:6px';
+    btnCopiar.onclick = function () {
+      if (!consolidatedData) { toast('Consolide os dados primeiro', 'warn'); return; }
+      copyText(buildText()).then(function () { toast('Fechamento copiado', 'ok'); })
+        .catch(function () { toast('Falha ao copiar', 'err'); });
+    };
+    var btnPDF = mk('button', '', ICON.print + '<span>Exportar PDF</span>');
+    btnPDF.className = 'mlm_btn mlm_btn_warn';
+    btnPDF.onclick = function () {
+      if (!consolidatedData) { toast('Consolide os dados primeiro', 'warn'); return; }
+      var d = new Date(STATE.date + 'T12:00:00');
+      var dataFmt = pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear();
+      var html = '<pre style="font-family:Consolas,monospace;font-size:11px;white-space:pre-wrap">' +
+        escapeHTML(buildText()) + '</pre>';
+      pdfExportHTML(html, 'Fechamento Consolidado — ' + dataFmt);
+    };
+    var btnFechar = mk('button', '', '<span>Fechar</span>');
+    btnFechar.className = 'mlm_btn';
+    btnFechar.onclick = modal.close;
+    modal.footer.appendChild(btnFechar);
+    modal.footer.appendChild(btnPDF);
+    modal.footer.appendChild(btnCopiar);
+
+    // Consolida automaticamente ao abrir
+    setTimeout(doConsolidate, 100);
+  }
 
     function refresh() { preview.textContent = buildText(); }
     [inpOperador, inpObs, inpAcoes, inpPendencia].forEach(function (el) { el.oninput = refresh; });
