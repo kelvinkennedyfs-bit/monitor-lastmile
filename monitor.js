@@ -3150,6 +3150,7 @@
       function emojiDS(pct) { return pct >= 99 ? '🟢' : pct >= 97 ? '🟡' : '🔴'; }
 
       var statsGeral = getDSStats(allRoutes);
+      var origensBreakdown = getOrigemBreakdown(allRoutes);
       var svcR = svcRoutes();
       var statsSVC = getDSStats(svcR);
       var meeRoutes = allRoutes.filter(function (r) {
@@ -3167,6 +3168,12 @@
       t += '🎯 *DS GERAL: ' + statsGeral.dsPct.toFixed(2) + '%*\n';
       t += fmt(statsGeral.failed) + ' insucessos\n';
       t += sep + '\n';
+      origensBreakdown.forEach(function (o) {
+        var routesOrigem = allRoutes.filter(function (r) { return r.origem === o.origem; });
+        var st = getDSStats(routesOrigem);
+        t += emojiDS(st.dsPct) + ' *' + o.origem + '* — ' + st.dsPct.toFixed(2) +
+             '% · ' + fmt(st.failed) + ' ins. · ' + fmt(o.count) + ' rotas\n';
+      });
       if (meeRoutes.length > 0) {
         t += emojiDS(statsMEE.dsPct) + ' *MEE (Envios Extra)* — ' + statsMEE.dsPct.toFixed(2) +
              '% · ' + fmt(statsMEE.failed) + ' ins.\n';
