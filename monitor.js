@@ -2876,8 +2876,11 @@
       });
       var carriersArr = Object.keys(byCarrier).map(function (k) {
         var b = byCarrier[k];
-        var base = b.total - b.foraDS;
+        // ⭐ FIX: mesma fórmula do getDSStats — base = entregues + insucessos reais
+        // (evita dupla subtração de transferidos, que já saem do totalPkg pela própria API)
+        var base = b.delivered + b.failed;
         b.dsPct = base > 0 ? (b.delivered / base) * 100 : 0;
+        if (b.dsPct > 100) b.dsPct = 100;  // trava de segurança
         b.name = k;
         return b;
       }).sort(function (a, b) { return b.dsPct - a.dsPct; });
