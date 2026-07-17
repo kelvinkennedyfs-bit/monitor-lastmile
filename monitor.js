@@ -720,6 +720,36 @@
       .sort(function (a, b) { return map[b] - map[a]; })
       .map(function (k) { return { origem: k, count: map[k] }; });
   }
+  // Diagnóstico: mostra no console os campos brutos candidatos a "origem física"
+  // — útil pra descobrir se facilityId realmente é o campo certo ou se é sempre fixo
+  function debugOrigensCandidatas() {
+    var sample = (STATE.routes || []).slice(0, 5);
+    if (sample.length === 0) return;
+    console.log('[MLM] 🔍 Diagnóstico de origem — campos brutos da rota:');
+    console.table(sample.map(function (r) {
+      var raw = r._raw || {};
+      return {
+        routeId: r.routeId,
+        'origem (em uso)': r.origem,
+        'raw.facilityId': raw.facilityId,
+        'raw.origin': raw.origin,
+        'raw.originFacilityId': raw.originFacilityId,
+        'raw.sourceFacility': raw.sourceFacility,
+        'raw.warehouseId': raw.warehouseId,
+        'raw.hub': raw.hub,
+        'raw.branchId': raw.branchId,
+        'raw.serviceCenterId': raw.serviceCenterId
+      };
+    }));
+    var breakdown = getOrigemBreakdown(STATE.routes || []);
+    if (breakdown.length <= 1) {
+      console.warn('[MLM] ⚠️ TODAS as rotas têm a MESMA origem (' +
+        (breakdown[0] ? breakdown[0].origem : '—') +
+        '). O campo usado não captura variação real — precisa trocar de campo.');
+    } else {
+      console.log('[MLM] ✅ Origens distintas encontradas:', breakdown);
+    }
+  }
 
   // Monta o dashboard visual (chamado dentro do modal de Fechamento)
   function buildDashboardVisual(routes, modeLabel, breakdown) {
@@ -2876,6 +2906,11 @@
     topBar.appendChild(btnAtualizar);
     topBar.appendChild(statusLbl);
     modal.body.appendChild(topBar);
+    var originWarning = mk('div',
+      'display:none;margin-top:10px;padding:10px 12px;background:rgba(245,158,11,.12);' +
+      'border:1px solid ' + T.warn + ';border-radius:8px;font-size:11px;color:' + T.warn +
+      ';line-height:1.5');
+    topBar.appendChild(originWarning);
 
     function updateStatusLbl() {
       var all = baseRoutes();
@@ -2886,6 +2921,16 @@
       statusLbl.innerHTML = '📊 <b style="color:' + T.ok + '">' + fmt(all.length) + ' rotas</b> GERAL · ' +
         '<b style="color:' + T.brand2 + '">' + fmt(svc.length) + ' rotas</b> SVC (' +
         escapeHTML(STATE.ssc) + ') · ' + parts.join(' · ') + extra;
+
+      if (breakdown.length <= 1) {
+        originWarning.style.display = 'block';
+        originWarning.innerHTML = '⚠️ <b>Todas as rotas carregadas têm a mesma origem</b> (' +
+          escapeHTML(breakdown[0] ? breakdown[0].origem : '—') + '). ' +
+          'Por isso GERAL e SVC mostram os mesmos números. Abra o Console (F12) e procure por ' +
+          '"[MLM] 🔍 Diagnóstico de origem" — me manda um print da tabela que aparecer.';
+      } else {
+        originWarning.style.display = 'none';
+      }
     }
 
     btnAtualizar.onclick = function () {
@@ -3202,7 +3247,7 @@
     btnPDFDash.onclick = function () {
       var d = new Date(STATE.date + 'T12:00:00');
       var dataFmt = pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear();
-      pdfExportHTML(dashboardWrap.innerHTML, 'Monitoramento ' + STATE.ssc + ' — ' + dataFmt);
+      pdfExportHTMLDark(dashboardWrap.innerHTML, 'Monitoramento ' + STATE.ssc + ' — ' + dataFmt);
     };
 
     var btnImgDash = mk('button', '', '📷 <span>Baixar Imagem</span>');
@@ -3228,6 +3273,7 @@
     setActiveViewBtn('texto');
     setActiveModeBtn('geral');
     updateStatusLbl();
+    debugOrigensCandidatas();
     refresh();
   }
 
@@ -3556,6 +3602,29 @@
       w.document.write(doc);
       w.document.close();
       toast('PDF aberto em nova janela', 'ok');
+    } catch (e) { toast('Erro ao gerar PDF', 'err'); }
+  }
+  // Versão DARK do export — mantém o tema escuro no PDF/impressão
+  // (força o navegador a não remover backgrounds ao imprimir)
+  function pdfExportHTMLDark(innerHTML, title) {
+    try {
+      var w = window.open('', '_blank', 'width=900,height=1000');
+      if (!w) { toast('Permita pop-ups', 'err'); return; }
+      var css = '@page{size:A4;margin:10mm}' +
+        '* { -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; ' +
+        'color-adjust:exact !important; }' +
+        'body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;' +
+        'background:' + T.bg + ';color:' + T.text + ';margin:0;padding:20px;' +
+        'display:flex;justify-content:center}' +
+        '@media print { body{background:' + T.bg + ' !important} }';
+      var doc = '<!doctype html><html><head><meta charset="UTF-8"><title>' +
+        escapeHTML(title || 'Fechamento') + '</title><style>' + css + '</style></head><body>' +
+        innerHTML +
+        '<script>setTimeout(function(){window.print();},400);<\/script></body></html>';
+      w.document.open();
+      w.document.write(doc);
+      w.document.close();
+      toast('PDF (tema escuro) aberto em nova janela', 'ok');
     } catch (e) { toast('Erro ao gerar PDF', 'err'); }
   }
 
