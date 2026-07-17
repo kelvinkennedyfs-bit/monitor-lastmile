@@ -2891,6 +2891,14 @@
         return normalizeOrigem(r.origem) === normalizeOrigem(STATE.ssc);
       });
     }
+    // SVC do Dashboard Visual: TODAS as origens, EXCETO ERJ2 e ERJ5
+    var DASHBOARD_SVC_EXCLUDE = ['ERJ2', 'ERJ5'];
+    function dashboardSvcRoutes() {
+      return baseRoutes().filter(function (r) {
+        var o = normalizeOrigem(r.origem);
+        return DASHBOARD_SVC_EXCLUDE.indexOf(o) < 0;
+      });
+    }
 
     // === TOP: status + botão atualizar ===
     var topBar = mk('div',
@@ -2965,7 +2973,7 @@
 
     var dashModeToggle = mk('div', 'display:none;gap:8px;margin-bottom:14px');
     var btnModeGeral = mk('button', '', 'GERAL (todas as origens)');
-    var btnModeSVC   = mk('button', '', 'SVC (' + escapeHTML(STATE.ssc) + ')');
+    var btnModeSVC   = mk('button', '', 'SVC (excl. ERJ2/ERJ5)');
     [btnModeGeral, btnModeSVC].forEach(function (b) {
       b.style.cssText = 'padding:6px 14px;border-radius:20px;font-size:11px;font-weight:700;' +
         'cursor:pointer;border:1px solid ' + T.border + ';background:' + T.surface +
@@ -3063,7 +3071,7 @@
 
     function renderDashboard() {
       dashboardWrap.innerHTML = '';
-      var routesForDash = currentDashMode === 'geral' ? geralRoutes() : svcRoutes();
+      var routesForDash = currentDashMode === 'geral' ? geralRoutes() : dashboardSvcRoutes();
       if (routesForDash.length === 0) {
         dashboardWrap.appendChild(mk('div',
           'padding:40px;text-align:center;color:' + T.muted,
@@ -3089,7 +3097,6 @@
       function emojiDS(pct) { return pct >= 99 ? '🟢' : pct >= 97 ? '🟡' : '🔴'; }
 
       var statsGeral = getDSStats(allRoutes);
-      var origensBreakdown = getOrigemBreakdown(allRoutes);
       var svcR = svcRoutes();
       var statsSVC = getDSStats(svcR);
       var meeRoutes = allRoutes.filter(function (r) {
@@ -3107,12 +3114,6 @@
       t += '🎯 *DS GERAL: ' + statsGeral.dsPct.toFixed(2) + '%*\n';
       t += fmt(statsGeral.failed) + ' insucessos\n';
       t += sep + '\n';
-      origensBreakdown.forEach(function (o) {
-        var routesOrigem = allRoutes.filter(function (r) { return r.origem === o.origem; });
-        var st = getDSStats(routesOrigem);
-        t += emojiDS(st.dsPct) + ' *' + o.origem + '* — ' + st.dsPct.toFixed(2) +
-             '% · ' + fmt(st.failed) + ' ins. · ' + fmt(o.count) + ' rotas\n';
-      });
       if (meeRoutes.length > 0) {
         t += emojiDS(statsMEE.dsPct) + ' *MEE (Envios Extra)* — ' + statsMEE.dsPct.toFixed(2) +
              '% · ' + fmt(statsMEE.failed) + ' ins.\n';
