@@ -638,6 +638,246 @@
       foraDS: foraDS, pctACaminho: pctACaminho, baseDS: baseDS, dsPct: dsPct
     };
   }
+  // Fórmula única de DS — usada em TODO o sistema (KPI, rotas, carriers, fechamento, dashboard)
+  function calcDSPercent(delivered, failedReal) {
+    var base = (delivered || 0) + (failedReal || 0);
+    if (base <= 0) return 0;
+    var pct = (delivered / base) * 100;
+    return pct > 100 ? 100 : pct;
+  }
+
+  // Cor de status baseada no DS% (>=99 verde, >=98 amarelo, <98 vermelho)
+  function dsStatusColor(pct) {
+    if (pct >= 99) return T.ok;
+    if (pct >= 98) return T.warn;
+    return T.err;
+  }
+
+  // Agrega rotas por transportadora — usado no dashboard de fechamento
+  function aggregateByCarrier(routes) {
+    var byCarrier = {};
+    routes.forEach(function (r) {
+      var c = r.carrier || '—';
+      if (!byCarrier[c]) {
+        byCarrier[c] = { name: c, routes: 0, total: 0, delivered: 0, failed: 0, bags: 0, pending: 0 };
+      }
+      var b = byCarrier[c];
+      b.routes++;
+      b.total += r.totalPkg || 0;
+      b.delivered += r.delivered || 0;
+      b.bags += r.bags || 0;
+      b.pending += r.pending || r.pendentes || 0;
+      if (r._detailsLoaded) b.failed += r._insucessoReal || 0;
+      else b.failed += r.failed || 0;
+    });
+    return Object.keys(byCarrier).map(function (k) {
+      var b = byCarrier[k];
+      b.dsPct = calcDSPercent(b.delivered, b.failed);
+      // ⚠️ SPR = placeholder (Sacas / Rotas) — ajustar se a fórmula real for diferente
+      b.spr = b.routes > 0 ? Math.round(b.bags / b.routes) : 0;
+      return b;
+    }).sort(function (a, b) { return b.total - a.total; });
+  }
+
+  // Agrega rotas por ciclo (CHP/AM1/PM1/SD) — usado no dashboard de fechamento
+  function aggregateByCiclo(routes) {
+    var CICLOS = ['CHP', 'AM1', 'PM1', 'SD'];
+    var byCiclo = {};
+    CICLOS.forEach(function (c) {
+      byCiclo[c] = { ciclo: c, routes: 0, total: 0, delivered: 0, failed: 0, bags: 0, pending: 0 };
+    });
+    routes.forEach(function (r) {
+      var c = r.ciclo || r.cycle || '';
+      if (!byCiclo[c]) return;
+      var b = byCiclo[c];
+      b.routes++;
+      b.total += r.totalPkg || 0;
+      b.delivered += r.delivered || 0;
+      b.bags += r.bags || 0;
+      b.pending += r.pending || r.pendentes || 0;
+      if (r._detailsLoaded) b.failed += r._insucessoReal || 0;
+      else b.failed += r.failed || 0;
+    });
+    return CICLOS.map(function (c) {
+      var b = byCiclo[c];
+      b.dsPct = calcDSPercent(b.delivered, b.failed);
+      return b;
+    });
+  }
+
+  // Monta o dashboard visual (chamado dentro do modal de Fechamento)
+  function buildDashboardVisual(routes, modeLabel) {
+    var stats = getDSStats(routes);
+    var carriers = aggregateByCarrier(routes);
+    var ciclos = aggregateByCiclo(routes);
+
+    var totalBags = 0;
+    routes.forEach(function (r) { totalBags += r.bags || 0; });
+    var totalRoutes = routes.length;
+    var pendentes = Math.max(0, stats.total - stats.delivered - stats.failed - stats.foraDS);
+    var pctInsucesso = stats.baseDS > 0 ? (stats.failed / stats.baseDS) * 100 : 0;
+    var pctPendente = stats.total > 0 ? (pendentes / stats.total) * 100 : 0;
+    var sprGeral = totalRoutes > 0 ? Math.round(totalBags / totalRoutes) : 0;
+
+    var wrap = mk('div', 'font-family:' + T.fUI + ';color:' + T.text);
+
+    // === HEADER ===
+    var header = mk('div',
+      'background:' + T.grad + ';border-radius:10px 10px 0 0;padding:16px 20px');
+    header.appendChild(mk('div',
+      'font-size:22px;font-weight:800;color:#fff;letter-spacing:.5px',
+      'MONITORAMENTO ' + escapeHTML(STATE.ssc)));
+    header.appendChild(mk('div',
+      'font-size:11px;font-weight:600;color:rgba(255,255,255,.85);letter-spacing:1px;' +
+      'margin-top:2px;text-transform:uppercase',
+      'Resumo operacional · Performance final'));
+    wrap.appendChild(header);
+
+    var body = mk('div',
+      'background:' + T.surface + ';border:1px solid ' + T.border + ';border-top:none;' +
+      'border-radius:0 0 10px 10px;padding:18px;display:grid;grid-template-columns:250px 1fr;gap:16px');
+    wrap.appendChild(body);
+
+    // === COLUNA ESQUERDA ===
+    var left = mk('div', 'display:flex;flex-direction:column;gap:10px');
+    left.appendChild(mk('div',
+      'font-size:11px;font-weight:700;color:' + T.muted + ';text-transform:uppercase;' +
+      'letter-spacing:1px;text-align:center', 'Performance'));
+
+    var modeColor = modeLabel === 'geral' ? T.brand2 : T.brand;
+    var modeBox = mk('div',
+      'background:rgba(15,23,42,.6);border:2px solid ' + modeColor + ';border-radius:10px;' +
+      'padding:20px 10px;text-align:center');
+    modeBox.appendChild(mk('div',
+      'font-size:30px;font-weight:900;color:' + modeColor + ';letter-spacing:1px;font-style:italic',
+      modeLabel === 'geral' ? 'GERAL' : 'SVC'));
+    left.appendChild(modeBox);
+
+    var meta = 98.5;
+    var metaColor = stats.dsPct >= meta ? T.ok : T.warn;
+    var metaBar = mk('div',
+      'background:' + (stats.dsPct >= meta ? 'rgba(16,185,129,.2)' : 'rgba(245,158,11,.2)') +
+      ';border:1px solid ' + metaColor + ';color:' + metaColor +
+      ';padding:8px;border-radius:8px;text-align:center;font-size:11px;font-weight:700',
+      'Meta DS > ' + meta.toFixed(1).replace('.', ',') + '%');
+    left.appendChild(metaBar);
+
+    var miniTbl = mk('table',
+      'width:100%;border-collapse:collapse;font-size:11px;background:rgba(15,23,42,.4);' +
+      'border-radius:8px;overflow:hidden');
+    function miniRow(label, val, big, color) {
+      var tr = mk('tr');
+      tr.appendChild(mk('td',
+        'padding:6px 10px;color:' + T.muted + ';font-weight:600;border-bottom:1px solid ' + T.border,
+        escapeHTML(label)));
+      tr.appendChild(mk('td',
+        'padding:6px 10px;text-align:right;font-family:' + T.fMono + ';font-weight:700;' +
+        'border-bottom:1px solid ' + T.border + ';color:' + (color || T.textHi) +
+        (big ? ';font-size:14px' : ''),
+        escapeHTML(String(val))));
+      return tr;
+    }
+    miniTbl.appendChild(miniRow('%DS', stats.dsPct.toFixed(2) + '%', true, dsStatusColor(stats.dsPct)));
+    miniTbl.appendChild(miniRow('Rotas', fmt(totalRoutes)));
+    miniTbl.appendChild(miniRow('SPR', fmt(sprGeral)));
+    miniTbl.appendChild(miniRow('Total Pcts', fmt(stats.total)));
+    miniTbl.appendChild(miniRow('Entregues', fmt(stats.delivered), false, T.ok));
+    miniTbl.appendChild(miniRow('Pendentes', fmt(pendentes), false, T.warn));
+    miniTbl.appendChild(miniRow('Insucessos', fmt(stats.failed), false, T.err));
+    miniTbl.appendChild(miniRow('% Insucessos', pctInsucesso.toFixed(2) + '%', false, T.err));
+    miniTbl.appendChild(miniRow('% Pendentes', pctPendente.toFixed(1) + '%', false, T.warn));
+    left.appendChild(miniTbl);
+    body.appendChild(left);
+
+    // === COLUNA DIREITA: TRANSPORTADORAS ===
+    var right = mk('div');
+    var carTbl = mk('table',
+      'width:100%;border-collapse:collapse;font-size:11px;background:rgba(15,23,42,.4);' +
+      'border-radius:8px;overflow:hidden');
+    var carThead = mk('thead'); var carTrh = mk('tr');
+    ['Transportadora', '%DS', 'Qtd Rotas', 'Total Pct', 'Entregue', 'Falha', 'Sacas', 'SPR', 'Pendentes']
+      .forEach(function (h) {
+        carTrh.appendChild(mk('th',
+          'padding:8px 10px;text-align:left;font-size:9px;color:' + T.muted +
+          ';font-weight:700;text-transform:uppercase;background:rgba(15,23,42,.6);' +
+          'border-bottom:1px solid ' + T.border, h));
+      });
+    carThead.appendChild(carTrh); carTbl.appendChild(carThead);
+    var carTbody = mk('tbody');
+    carriers.forEach(function (c) {
+      var color = dsStatusColor(c.dsPct);
+      var bgColor = color === T.ok ? 'rgba(16,185,129,.15)' :
+                    color === T.warn ? 'rgba(245,158,11,.15)' : 'rgba(239,68,68,.15)';
+      var tr = mk('tr');
+      tr.appendChild(mk('td', 'padding:7px 10px;color:' + T.textHi + ';font-weight:600;' +
+        'border-bottom:1px solid ' + T.border, escapeHTML(c.name)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';font-weight:700;' +
+        'color:' + color + ';background:' + bgColor + ';border-bottom:1px solid ' + T.border,
+        c.dsPct.toFixed(2) + '%'));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
+        ';border-bottom:1px solid ' + T.border, fmt(c.routes)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
+        ';border-bottom:1px solid ' + T.border, fmt(c.total)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.ok +
+        ';border-bottom:1px solid ' + T.border, fmt(c.delivered)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' +
+        (c.failed > 0 ? T.err : T.muted) + ';border-bottom:1px solid ' + T.border, fmt(c.failed)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
+        ';border-bottom:1px solid ' + T.border, fmt(c.bags)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
+        ';border-bottom:1px solid ' + T.border, fmt(c.spr)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' +
+        (c.pending > 0 ? T.warn : T.muted) + ';border-bottom:1px solid ' + T.border, fmt(c.pending)));
+      carTbody.appendChild(tr);
+    });
+    carTbl.appendChild(carTbody);
+    right.appendChild(carTbl);
+    body.appendChild(right);
+
+    // === RELATÓRIO POR CICLO ===
+    var cicloWrap = mk('div', 'grid-column:1 / -1;margin-top:6px');
+    cicloWrap.appendChild(mk('div',
+      'font-size:12px;font-weight:700;color:' + T.textHi + ';margin-bottom:8px;text-align:center;' +
+      'background:rgba(15,23,42,.6);padding:8px;border-radius:8px 8px 0 0', 'Relatório Por Ciclo'));
+    var cicloTbl = mk('table',
+      'width:100%;border-collapse:collapse;font-size:11px;background:rgba(15,23,42,.4);' +
+      'border-radius:0 0 8px 8px;overflow:hidden');
+    var cicloThead = mk('thead'); var cicloTrh = mk('tr');
+    ['Ciclo', 'Pacotes', 'Entregues', 'Falhas', '%DS', 'Rotas', 'Pendentes', 'Sacas'].forEach(function (h) {
+      cicloTrh.appendChild(mk('th',
+        'padding:8px 10px;text-align:left;font-size:9px;color:' + T.muted +
+        ';font-weight:700;text-transform:uppercase;background:rgba(15,23,42,.6);' +
+        'border-bottom:1px solid ' + T.border, h));
+    });
+    cicloThead.appendChild(cicloTrh); cicloTbl.appendChild(cicloThead);
+    var cicloTbody = mk('tbody');
+    ciclos.forEach(function (c) {
+      var color = dsStatusColor(c.dsPct);
+      var tr = mk('tr');
+      tr.appendChild(mk('td', 'padding:7px 10px;color:' + T.textHi + ';font-weight:700;' +
+        'border-bottom:1px solid ' + T.border, escapeHTML(c.ciclo)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
+        ';border-bottom:1px solid ' + T.border, fmt(c.total)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.ok +
+        ';border-bottom:1px solid ' + T.border, fmt(c.delivered)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' +
+        (c.failed > 0 ? T.err : T.muted) + ';border-bottom:1px solid ' + T.border, fmt(c.failed)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';font-weight:700;' +
+        'color:' + color + ';border-bottom:1px solid ' + T.border, c.dsPct.toFixed(2) + '%'));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
+        ';border-bottom:1px solid ' + T.border, fmt(c.routes)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' +
+        (c.pending > 0 ? T.warn : T.muted) + ';border-bottom:1px solid ' + T.border, fmt(c.pending)));
+      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
+        ';border-bottom:1px solid ' + T.border, fmt(c.bags)));
+      cicloTbody.appendChild(tr);
+    });
+    cicloTbl.appendChild(cicloTbody);
+    cicloWrap.appendChild(cicloTbl);
+    body.appendChild(cicloWrap);
+
+    return wrap;
+  }
 
   function renderKPIs() {
     var all = STATE.routes || [];
@@ -2470,7 +2710,7 @@
     btnX.onclick = close;
     overlay.onclick = function (e) { if (e.target === overlay) close(); };
     document.addEventListener('keydown', onKey);
-    return { overlay: overlay, body: body, footer: foot, close: close };
+    return { overlay: overlay, box: box, body: body, footer: foot, close: close };
   }
 
   function openReportModal() {
@@ -2620,6 +2860,94 @@
 
     var grid = mk('div', 'display:grid;grid-template-columns:1fr 1fr;gap:16px');
     modal.body.appendChild(grid);
+    // === VIEW SWITCHER: Texto (WhatsApp) vs Dashboard Visual ===
+    var viewSwitcher = mk('div', 'display:flex;gap:8px;margin-bottom:14px');
+    var btnViewTexto = mk('button', '', '📝 Relatório Texto');
+    var btnViewDash  = mk('button', '', '📊 Dashboard Visual');
+    [btnViewTexto, btnViewDash].forEach(function (b) {
+      b.style.cssText = 'padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;' +
+        'cursor:pointer;border:1px solid ' + T.border + ';background:' + T.surface +
+        ';color:' + T.mutedHi;
+    });
+    viewSwitcher.appendChild(btnViewTexto);
+    viewSwitcher.appendChild(btnViewDash);
+    modal.body.insertBefore(viewSwitcher, grid);
+
+    var dashModeToggle = mk('div', 'display:none;gap:8px;margin-bottom:14px');
+    var btnModeGeral = mk('button', '', 'GERAL (todos os serviços)');
+    var btnModeSVC   = mk('button', '', 'SVC (' + STATE.ssc + ')');
+    [btnModeGeral, btnModeSVC].forEach(function (b) {
+      b.style.cssText = 'padding:6px 14px;border-radius:20px;font-size:11px;font-weight:700;' +
+        'cursor:pointer;border:1px solid ' + T.border + ';background:' + T.surface +
+        ';color:' + T.mutedHi;
+    });
+    dashModeToggle.appendChild(btnModeGeral);
+    dashModeToggle.appendChild(btnModeSVC);
+    modal.body.insertBefore(dashModeToggle, grid);
+
+    var dashboardWrap = mk('div', 'display:none');
+    modal.body.insertBefore(dashboardWrap, grid);
+
+    var currentDashMode = 'geral';
+
+    function setActiveViewBtn(active) {
+      [btnViewTexto, btnViewDash].forEach(function (b) {
+        b.style.background = T.surface; b.style.color = T.mutedHi; b.style.borderColor = T.border;
+      });
+      var el = active === 'texto' ? btnViewTexto : btnViewDash;
+      el.style.background = T.gradSoft; el.style.color = T.textHi; el.style.borderColor = T.brand;
+    }
+    function setActiveModeBtn(mode) {
+      [btnModeGeral, btnModeSVC].forEach(function (b) {
+        b.style.background = T.surface; b.style.color = T.mutedHi; b.style.borderColor = T.border;
+      });
+      var el = mode === 'geral' ? btnModeGeral : btnModeSVC;
+      el.style.background = T.grad; el.style.color = '#fff'; el.style.borderColor = T.brand;
+    }
+
+    function showTextoView() {
+      grid.style.display = 'grid';
+      dashboardWrap.style.display = 'none';
+      dashModeToggle.style.display = 'none';
+      setActiveViewBtn('texto');
+      modal.box.style.width = '860px';
+      btnPDF.style.display = 'inline-flex';
+      btnCopiar.style.display = 'inline-flex';
+      btnPDFDash.style.display = 'none';
+    }
+    function showDashView() {
+      grid.style.display = 'none';
+      dashboardWrap.style.display = 'block';
+      dashModeToggle.style.display = 'flex';
+      setActiveViewBtn('dash');
+      modal.box.style.width = '1160px';
+      btnPDF.style.display = 'none';
+      btnCopiar.style.display = 'none';
+      btnPDFDash.style.display = 'inline-flex';
+      renderDashboard();
+    }
+    btnViewTexto.onclick = showTextoView;
+    btnViewDash.onclick  = showDashView;
+    btnModeGeral.onclick = function () { currentDashMode = 'geral'; setActiveModeBtn('geral'); renderDashboard(); };
+    btnModeSVC.onclick   = function () { currentDashMode = 'svc';   setActiveModeBtn('svc');   renderDashboard(); };
+
+    function renderDashboard() {
+      dashboardWrap.innerHTML = '';
+      if (!consolidatedData) {
+        dashboardWrap.appendChild(mk('div',
+          'padding:40px;text-align:center;color:' + T.muted, 'Consolide os dados primeiro.'));
+        return;
+      }
+      var routesForDash;
+      if (currentDashMode === 'geral') {
+        routesForDash = [].concat(consolidatedData.SRJ3 || [], consolidatedData.ERJ2 || [], consolidatedData.ERJ5 || [])
+          .filter(function (r) { return r.status !== 'A caminho do destino'; });
+      } else {
+        routesForDash = (consolidatedData[STATE.ssc] || consolidatedData.SRJ3 || [])
+          .filter(function (r) { return r.status !== 'A caminho do destino'; });
+      }
+      dashboardWrap.appendChild(buildDashboardVisual(routesForDash, currentDashMode));
+    }
     var form = mk('div', 'display:flex;flex-direction:column;gap:10px');
     grid.appendChild(form);
 
@@ -2982,12 +3310,27 @@
         escapeHTML(buildText()) + '</pre>';
       pdfExportHTML(html, 'Fechamento Consolidado — ' + dataFmt);
     };
+    var btnPDFDash = mk('button', '', ICON.print + '<span>Exportar Dashboard PDF</span>');
+    btnPDFDash.className = 'mlm_btn mlm_btn_warn';
+    btnPDFDash.style.display = 'none';
+    btnPDFDash.onclick = function () {
+      if (!consolidatedData) { toast('Consolide os dados primeiro', 'warn'); return; }
+      var d = new Date(STATE.date + 'T12:00:00');
+      var dataFmt = pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear();
+      pdfExportHTML(dashboardWrap.innerHTML, 'Monitoramento ' + STATE.ssc + ' — ' + dataFmt);
+    };
+
     var btnFechar = mk('button', '', '<span>Fechar</span>');
     btnFechar.className = 'mlm_btn';
     btnFechar.onclick = modal.close;
     modal.footer.appendChild(btnFechar);
     modal.footer.appendChild(btnPDF);
+    modal.footer.appendChild(btnPDFDash);
     modal.footer.appendChild(btnCopiar);
+
+    // Estado inicial: vista de texto
+    setActiveViewBtn('texto');
+    setActiveModeBtn('geral');
 
     // Consolida automaticamente ao abrir
     setTimeout(doConsolidate, 100);
