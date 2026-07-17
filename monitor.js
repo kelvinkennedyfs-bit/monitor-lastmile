@@ -561,28 +561,29 @@
     return false;
   }
 
-  // Categoriza um motivo em: 'ok' (entregue), 'foraDS' (transferido/agência), 'insucesso' (real)
-  function categorizarMotivo(reason) {
-    if (!reason) return 'insucesso';
-    return isInsucessoForaDoDS(reason) ? 'foraDS' : 'insucesso';
+  // Classifica uma falha (objeto {reason, substatus}) em: 'transferido' | 'agencia' | 'real'
+  function categorizeFailure(f) {
+    if (!f) return 'real';
+    var subst = String(f.substatus || '').toLowerCase();
+    var reasonNorm = String(f.reason || '').toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    if (subst === 'transferred' || subst.indexOf('transferred') >= 0 ||
+        reasonNorm.indexOf('transferid') >= 0) {
+      return 'transferido';
+    }
+    if (isInsucessoForaDoDS(f.reason)) return 'agencia';
+    return 'real';
   }
-// Recalcula os contadores de uma rota depois que os detalhes chegaram (r.failures populado)
   // Isso corrige o problema de o r.failed vir do get-routes-list (que conta transferidos como insucesso)
   function recomputeRouteCounters(r) {
     if (!r) return;
     var insucessoReal = 0, foraDS = 0, transferidos = 0, naoAgencia = 0;
 
     (r.failures || []).forEach(function (f) {
-      var reason = String(f.reason || '').toLowerCase();
-      var subst = String(f.substatus || '').toLowerCase();
-      if (subst === 'transferred' || subst.indexOf('transferred') >= 0 ||
-          reason.indexOf('transferid') >= 0) {
-        transferidos++; foraDS++;
-      } else if (isInsucessoForaDoDS(f.reason)) {
-        naoAgencia++; foraDS++;
-      } else {
-        insucessoReal++;
-      }
+      var cat = categorizeFailure(f);
+      if (cat === 'transferido')      { transferidos++; foraDS++; }
+      else if (cat === 'agencia')     { naoAgencia++;   foraDS++; }
+      else                            { insucessoReal++; }
     });
 
     r._insucessoReal = insucessoReal;
@@ -1601,39 +1602,50 @@
     var allRoutes = applyGlobalFilters(STATE.routes || [])
       .filter(function (r) { return r.status !== 'A caminho do destino'; });
 
-    // Helper: pega o número de insucessos da rota (real se carregou, bruto senão)
+    // Helper: pega o número de insucessos REAIS da rota (real se carregou, bruto senão)
     function getInsuc(r) {
       return r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
     }
+    // Helper: total de OCORRÊNCIAS (real + fora do DS) — usado só pra contagem de motivos
+    function getTotalOcorrencias(r) {
+      if (r._detailsLoaded) return (r._insucessoReal || 0) + (r._foraDS || 0);
+      return r.failed || 0;
+    }
 
+    // Lista de rotas com insucesso REAL (usada nos cards/top10 — o que conta no DS)
     var routes = allRoutes.filter(function (r) { return getInsuc(r) > 0; });
     routes.sort(function (a, b) { return getInsuc(b) - getInsuc(a); });
+
+    // ⭐ FIX: pra contagem de MOTIVOS usamos TODAS as rotas com qualquer ocorrência,
+    // senão rotas só-transferido ou só-agência ficam de fora e subcontam os totais.
+    var routesComOcorrencia = allRoutes.filter(function (r) { return getTotalOcorrencias(r) > 0; });
 
     var totalInsucessos = 0;
     routes.forEach(function (r) { totalInsucessos += getInsuc(r); });
 
     // === CONTAGEM DE MOTIVOS (inclui agência/transferido, mas marca como "fora DS") ===
     var motivosCount = {};
-    var motivosForaDS = {};  // rastreia quais são fora do DS
+    var motivosForaDS = {};
     var totalComMotivo = 0;
-    routes.forEach(function (r) {
+    routesComOcorrencia.forEach(function (r) {
       (r.failures || []).forEach(function (f) {
         var m = f.reason || 'Sem motivo';
         motivosCount[m] = (motivosCount[m] || 0) + 1;
         if (isInsucessoForaDoDS(f.reason)) {
           motivosForaDS[m] = true;
         } else {
-          totalComMotivo++;  // só conta no total do DS os reais
+          totalComMotivo++;
         }
       });
     });
-    // Também precisamos varrer as rotas pra pegar TODOS os failures (inclusive os que vieram só como r.failures com transferidos)
     var motivosArr = Object.keys(motivosCount).map(function (k) {
       return { motivo: k, qtd: motivosCount[k], foraDS: !!motivosForaDS[k] };
     }).sort(function (a, b) { return b.qtd - a.qtd; });
 
-    // Rotas ainda aguardando detail
-    var pendentesDetail = routes.filter(function (r) { return !r._detailsLoaded; }).length;
+    // Rotas ainda aguardando detail (considera qualquer rota com failed>0 no bruto)
+    var pendentesDetail = allRoutes.filter(function (r) {
+      return (r.failed || 0) > 0 && !r._detailsLoaded;
+    }).length;
 
     // === HEADER ===
     var subInfo = fmt(totalInsucessos) + ' pacotes em ' + routes.length + ' rotas';
@@ -2824,7 +2836,7 @@
       t += '• Entregues: ' + fmt(statsSRJ3.delivered) + ' ✅\n';
       t += '• Pendentes: ' + fmt(pendSRJ3) + ' ⏳\n';
       t += '• Insucessos: ' + fmt(statsSRJ3.failed) + ' 🔴\n';
-      if (statsSRJ3.foraDS > 0) t += '• Fora do DS: ' + fmt(statsSRJ3.foraDS) + ' ⚪\n';
+      if (statsSRJ3.naoAgencia > 0) t += '• Insucessos de coleta: ' + fmt(statsSRJ3.naoAgencia) + ' ⚪\n';
       t += '• PNR: ' + fmt(statsSRJ3.pnr) + ' 🟡\n';
       t += '\n';
       t += '🎯 *DS Operacional: ' + statsSRJ3.dsPct.toFixed(2) + '%* ' + emojiDS(statsSRJ3.dsPct) + '\n';
