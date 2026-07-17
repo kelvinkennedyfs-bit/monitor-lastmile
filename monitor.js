@@ -706,10 +706,26 @@
   }
 
   // Monta o dashboard visual (chamado dentro do modal de Fechamento)
-  function buildDashboardVisual(routes, modeLabel) {
+  function buildDashboardVisual(routes, modeLabel, consolidateList) {
     var stats = getDSStats(routes);
     var carriers = aggregateByCarrier(routes);
     var ciclos = aggregateByCiclo(routes);
+
+    var D = {
+      hdrGrad: 'linear-gradient(135deg,#1e1b4b 0%,#4c1d95 45%,#0891b2 100%)',
+      bg: '#ffffff', bgAlt: '#f8fafc', bgAlt2: '#f1f5f9',
+      border: '#e2e8f0',
+      text: '#0f172a', muted: '#64748b',
+      ok: '#059669', okBg: '#d1fae5', okBorder: '#6ee7b7',
+      warn: '#d97706', warnBg: '#fef3c7', warnBorder: '#fcd34d',
+      err: '#dc2626', errBg: '#fee2e2', errBorder: '#fca5a5',
+      brand: '#7c3aed', brand2: '#06b6d4'
+    };
+    function dsColor(pct) {
+      if (pct >= 99) return { c: D.ok,   bg: D.okBg,   bd: D.okBorder,   label: '🟢' };
+      if (pct >= 98) return { c: D.warn, bg: D.warnBg, bd: D.warnBorder, label: '🟡' };
+      return           { c: D.err,  bg: D.errBg,  bd: D.errBorder,  label: '🔴' };
+    }
 
     var totalBags = 0;
     routes.forEach(function (r) { totalBags += r.bags || 0; });
@@ -718,165 +734,225 @@
     var pctInsucesso = stats.baseDS > 0 ? (stats.failed / stats.baseDS) * 100 : 0;
     var pctPendente = stats.total > 0 ? (pendentes / stats.total) * 100 : 0;
     var sprGeral = totalRoutes > 0 ? Math.round(totalBags / totalRoutes) : 0;
-
-    var wrap = mk('div', 'font-family:' + T.fUI + ';color:' + T.text);
-
-    // === HEADER ===
-    var header = mk('div',
-      'background:' + T.grad + ';border-radius:10px 10px 0 0;padding:16px 20px');
-    header.appendChild(mk('div',
-      'font-size:22px;font-weight:800;color:#fff;letter-spacing:.5px',
-      'MONITORAMENTO ' + escapeHTML(STATE.ssc)));
-    header.appendChild(mk('div',
-      'font-size:11px;font-weight:600;color:rgba(255,255,255,.85);letter-spacing:1px;' +
-      'margin-top:2px;text-transform:uppercase',
-      'Resumo operacional · Performance final'));
-    wrap.appendChild(header);
-
-    var body = mk('div',
-      'background:' + T.surface + ';border:1px solid ' + T.border + ';border-top:none;' +
-      'border-radius:0 0 10px 10px;padding:18px;display:grid;grid-template-columns:250px 1fr;gap:16px');
-    wrap.appendChild(body);
-
-    // === COLUNA ESQUERDA ===
-    var left = mk('div', 'display:flex;flex-direction:column;gap:10px');
-    left.appendChild(mk('div',
-      'font-size:11px;font-weight:700;color:' + T.muted + ';text-transform:uppercase;' +
-      'letter-spacing:1px;text-align:center', 'Performance'));
-
-    var modeColor = modeLabel === 'geral' ? T.brand2 : T.brand;
-    var modeBox = mk('div',
-      'background:rgba(15,23,42,.6);border:2px solid ' + modeColor + ';border-radius:10px;' +
-      'padding:20px 10px;text-align:center');
-    modeBox.appendChild(mk('div',
-      'font-size:30px;font-weight:900;color:' + modeColor + ';letter-spacing:1px;font-style:italic',
-      modeLabel === 'geral' ? 'GERAL' : 'SVC'));
-    left.appendChild(modeBox);
-
+    var mainDS = dsColor(stats.dsPct);
     var meta = 98.5;
-    var metaColor = stats.dsPct >= meta ? T.ok : T.warn;
-    var metaBar = mk('div',
-      'background:' + (stats.dsPct >= meta ? 'rgba(16,185,129,.2)' : 'rgba(245,158,11,.2)') +
-      ';border:1px solid ' + metaColor + ';color:' + metaColor +
-      ';padding:8px;border-radius:8px;text-align:center;font-size:11px;font-weight:700',
-      'Meta DS > ' + meta.toFixed(1).replace('.', ',') + '%');
-    left.appendChild(metaBar);
+    var metaOk = stats.dsPct >= meta;
 
-    var miniTbl = mk('table',
-      'width:100%;border-collapse:collapse;font-size:11px;background:rgba(15,23,42,.4);' +
-      'border-radius:8px;overflow:hidden');
-    function miniRow(label, val, big, color) {
-      var tr = mk('tr');
-      tr.appendChild(mk('td',
-        'padding:6px 10px;color:' + T.muted + ';font-weight:600;border-bottom:1px solid ' + T.border,
-        escapeHTML(label)));
-      tr.appendChild(mk('td',
-        'padding:6px 10px;text-align:right;font-family:' + T.fMono + ';font-weight:700;' +
-        'border-bottom:1px solid ' + T.border + ';color:' + (color || T.textHi) +
-        (big ? ';font-size:14px' : ''),
-        escapeHTML(String(val))));
-      return tr;
+    function gauge(pct, color) {
+      var size = 168, stroke = 16, r = (size - stroke) / 2, c = 2 * Math.PI * r;
+      var offset = c - (Math.min(pct, 100) / 100) * c;
+      return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size +
+        '" style="display:block">' +
+        '<circle cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r +
+        '" fill="none" stroke="#e2e8f0" stroke-width="' + stroke + '"/>' +
+        '<circle cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" fill="none" stroke="' + color +
+        '" stroke-width="' + stroke + '" stroke-linecap="round" stroke-dasharray="' + c.toFixed(2) +
+        '" stroke-dashoffset="' + offset.toFixed(2) + '" transform="rotate(-90 ' + size / 2 + ' ' + size / 2 +
+        ')"/></svg>';
     }
-    miniTbl.appendChild(miniRow('%DS', stats.dsPct.toFixed(2) + '%', true, dsStatusColor(stats.dsPct)));
-    miniTbl.appendChild(miniRow('Rotas', fmt(totalRoutes)));
-    miniTbl.appendChild(miniRow('SPR', fmt(sprGeral)));
-    miniTbl.appendChild(miniRow('Total Pcts', fmt(stats.total)));
-    miniTbl.appendChild(miniRow('Entregues', fmt(stats.delivered), false, T.ok));
-    miniTbl.appendChild(miniRow('Pendentes', fmt(pendentes), false, T.warn));
-    miniTbl.appendChild(miniRow('Insucessos', fmt(stats.failed), false, T.err));
-    miniTbl.appendChild(miniRow('% Insucessos', pctInsucesso.toFixed(2) + '%', false, T.err));
-    miniTbl.appendChild(miniRow('% Pendentes', pctPendente.toFixed(1) + '%', false, T.warn));
-    left.appendChild(miniTbl);
-    body.appendChild(left);
 
-    // === COLUNA DIREITA: TRANSPORTADORAS ===
-    var right = mk('div');
+    var card = mk('div',
+      'background:' + D.bg + ';border-radius:16px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.35);' +
+      'font-family:' + T.fUI + ';color:' + D.text + ';width:100%');
+
+    // ===== HEADER =====
+    var header = mk('div',
+      'background:' + D.hdrGrad + ';padding:22px 28px;position:relative;overflow:hidden');
+    header.appendChild(mk('div',
+      'position:absolute;top:-40px;right:-40px;width:180px;height:180px;border-radius:50%;' +
+      'background:rgba(255,255,255,.06)'));
+    header.appendChild(mk('div',
+      'position:absolute;bottom:-60px;right:60px;width:140px;height:140px;border-radius:50%;' +
+      'background:rgba(255,255,255,.05)'));
+    var hdrTop = mk('div', 'display:flex;align-items:center;justify-content:space-between;position:relative;z-index:1');
+    var hdrLeft = mk('div');
+    hdrLeft.appendChild(mk('div',
+      'font-size:26px;font-weight:900;color:#fff;letter-spacing:.5px;line-height:1.1',
+      '📦 MONITORAMENTO ' + escapeHTML(STATE.ssc)));
+    hdrLeft.appendChild(mk('div',
+      'font-size:11px;font-weight:700;color:rgba(255,255,255,.75);letter-spacing:2px;' +
+      'text-transform:uppercase;margin-top:4px',
+      'Resumo Operacional · Performance Final'));
+    hdrTop.appendChild(hdrLeft);
+
+    var modeBadge = mk('div',
+      'background:rgba(255,255,255,.15);border:1.5px solid rgba(255,255,255,.4);' +
+      'padding:8px 18px;border-radius:10px;text-align:center;backdrop-filter:blur(4px)');
+    modeBadge.appendChild(mk('div',
+      'font-size:9px;font-weight:700;color:rgba(255,255,255,.7);letter-spacing:1.5px', 'MODO'));
+    modeBadge.appendChild(mk('div',
+      'font-size:18px;font-weight:900;color:#fff;letter-spacing:1px;font-style:italic',
+      modeLabel === 'geral' ? 'GERAL' : 'SVC'));
+    hdrTop.appendChild(modeBadge);
+    header.appendChild(hdrTop);
+
+    var now = new Date();
+    var d0 = new Date(STATE.date + 'T12:00:00');
+    var consolLbl = (modeLabel === 'geral' && consolidateList && consolidateList.length > 1)
+      ? '  ·  Consolidado: ' + consolidateList.join(' + ') : '';
+    header.appendChild(mk('div',
+      'font-size:10px;color:rgba(255,255,255,.65);margin-top:10px;font-family:' + T.fMono +
+      ';position:relative;z-index:1',
+      '📅 ' + pad(d0.getDate()) + '/' + pad(d0.getMonth() + 1) + '/' + d0.getFullYear() +
+      '  ·  🕐 Gerado às ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + consolLbl));
+    card.appendChild(header);
+
+    // ===== HERO: gauge + KPIs =====
+    var hero = mk('div',
+      'display:grid;grid-template-columns:220px 1fr;gap:0;background:' + D.bgAlt +
+      ';border-bottom:1px solid ' + D.border);
+
+    var heroLeft = mk('div',
+      'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+      'padding:24px;border-right:1px solid ' + D.border);
+    var gaugeWrap = mk('div', 'position:relative;width:168px;height:168px', gauge(stats.dsPct, mainDS.c));
+    var gaugeLabel = mk('div',
+      'position:absolute;top:0;left:0;width:168px;height:168px;display:flex;' +
+      'flex-direction:column;align-items:center;justify-content:center');
+    gaugeLabel.appendChild(mk('div',
+      'font-size:30px;font-weight:900;color:' + mainDS.c + ';font-family:' + T.fMono + ';line-height:1',
+      stats.dsPct.toFixed(2) + '%'));
+    gaugeLabel.appendChild(mk('div',
+      'font-size:10px;font-weight:700;color:' + D.muted + ';letter-spacing:1px;margin-top:4px',
+      'DS OPERACIONAL'));
+    gaugeWrap.appendChild(gaugeLabel);
+    heroLeft.appendChild(gaugeWrap);
+
+    var metaTag = mk('div',
+      'margin-top:14px;padding:6px 14px;border-radius:20px;font-size:11px;font-weight:700;' +
+      'background:' + (metaOk ? D.okBg : D.warnBg) + ';color:' + (metaOk ? D.ok : D.warn) +
+      ';border:1px solid ' + (metaOk ? D.okBorder : D.warnBorder),
+      (metaOk ? '✅' : '⚠️') + ' Meta ' + meta.toFixed(1).replace('.', ',') + '% ' +
+      (metaOk ? 'atingida' : '— faltam ' + (meta - stats.dsPct).toFixed(2) + 'pp'));
+    heroLeft.appendChild(metaTag);
+    hero.appendChild(heroLeft);
+
+    var heroRight = mk('div', 'padding:20px 24px');
+    var kpiGrid = mk('div', 'display:grid;grid-template-columns:repeat(3,1fr);gap:12px');
+    function kpiCard(icon, label, val, color, bg) {
+      var c = mk('div',
+        'background:' + (bg || '#fff') + ';border:1px solid ' + D.border +
+        ';border-left:4px solid ' + color + ';border-radius:10px;padding:12px 14px');
+      c.appendChild(mk('div',
+        'font-size:10px;color:' + D.muted + ';font-weight:700;text-transform:uppercase;' +
+        'letter-spacing:.5px;margin-bottom:4px', icon + ' ' + label));
+      c.appendChild(mk('div',
+        'font-size:20px;font-weight:800;color:' + color + ';font-family:' + T.fMono, val));
+      return c;
+    }
+    kpiGrid.appendChild(kpiCard('📦', 'Total Pacotes', fmt(stats.total), D.text, '#fff'));
+    kpiGrid.appendChild(kpiCard('🛣️', 'Rotas', fmt(totalRoutes), D.brand, '#fff'));
+    kpiGrid.appendChild(kpiCard('🎒', 'SPR (méd.)', fmt(sprGeral), D.brand2, '#fff'));
+    kpiGrid.appendChild(kpiCard('✅', 'Entregues', fmt(stats.delivered), D.ok, D.okBg));
+    kpiGrid.appendChild(kpiCard('⏳', 'Pendentes', fmt(pendentes) + ' (' + pctPendente.toFixed(1) + '%)', D.warn, D.warnBg));
+    kpiGrid.appendChild(kpiCard('🔴', 'Insucessos', fmt(stats.failed) + ' (' + pctInsucesso.toFixed(2) + '%)', D.err, D.errBg));
+    heroRight.appendChild(kpiGrid);
+    hero.appendChild(heroRight);
+    card.appendChild(hero);
+
+    // ===== TRANSPORTADORAS =====
+    var section1 = mk('div', 'padding:20px 24px;background:' + D.bg);
+    section1.appendChild(mk('div',
+      'font-size:14px;font-weight:800;color:' + D.text + ';margin-bottom:12px;display:flex;' +
+      'align-items:center;gap:8px',
+      '🏢 <span>Performance por Transportadora</span>'));
+
+    var maxTotal = 0;
+    carriers.forEach(function (c) { if (c.total > maxTotal) maxTotal = c.total; });
+
     var carTbl = mk('table',
-      'width:100%;border-collapse:collapse;font-size:11px;background:rgba(15,23,42,.4);' +
-      'border-radius:8px;overflow:hidden');
-    var carThead = mk('thead'); var carTrh = mk('tr');
-    ['Transportadora', '%DS', 'Qtd Rotas', 'Total Pct', 'Entregue', 'Falha', 'Sacas', 'SPR', 'Pendentes']
-      .forEach(function (h) {
+      'width:100%;border-collapse:separate;border-spacing:0;font-size:12px;' +
+      'border-radius:10px;overflow:hidden;border:1px solid ' + D.border);
+    var carThead = mk('thead');
+    var carTrh = mk('tr', 'background:' + D.hdrGrad);
+    ['Transportadora', '%DS', 'Rotas', 'Total Pct', 'Entregue', 'Falha', 'Sacas', 'SPR', 'Pendentes', 'Volume']
+      .forEach(function (h, i) {
         carTrh.appendChild(mk('th',
-          'padding:8px 10px;text-align:left;font-size:9px;color:' + T.muted +
-          ';font-weight:700;text-transform:uppercase;background:rgba(15,23,42,.6);' +
-          'border-bottom:1px solid ' + T.border, h));
+          'padding:10px 12px;text-align:' + (i === 0 ? 'left' : 'center') + ';font-size:9.5px;color:#fff;' +
+          'font-weight:700;text-transform:uppercase;letter-spacing:.5px', h));
       });
     carThead.appendChild(carTrh); carTbl.appendChild(carThead);
     var carTbody = mk('tbody');
-    carriers.forEach(function (c) {
-      var color = dsStatusColor(c.dsPct);
-      var bgColor = color === T.ok ? 'rgba(16,185,129,.15)' :
-                    color === T.warn ? 'rgba(245,158,11,.15)' : 'rgba(239,68,68,.15)';
-      var tr = mk('tr');
-      tr.appendChild(mk('td', 'padding:7px 10px;color:' + T.textHi + ';font-weight:600;' +
-        'border-bottom:1px solid ' + T.border, escapeHTML(c.name)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';font-weight:700;' +
-        'color:' + color + ';background:' + bgColor + ';border-bottom:1px solid ' + T.border,
-        c.dsPct.toFixed(2) + '%'));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
-        ';border-bottom:1px solid ' + T.border, fmt(c.routes)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
-        ';border-bottom:1px solid ' + T.border, fmt(c.total)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.ok +
-        ';border-bottom:1px solid ' + T.border, fmt(c.delivered)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' +
-        (c.failed > 0 ? T.err : T.muted) + ';border-bottom:1px solid ' + T.border, fmt(c.failed)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
-        ';border-bottom:1px solid ' + T.border, fmt(c.bags)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
-        ';border-bottom:1px solid ' + T.border, fmt(c.spr)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' +
-        (c.pending > 0 ? T.warn : T.muted) + ';border-bottom:1px solid ' + T.border, fmt(c.pending)));
+    carriers.forEach(function (c, idx) {
+      var dc = dsColor(c.dsPct);
+      var rowBg = idx % 2 === 0 ? '#fff' : D.bgAlt;
+      var tr = mk('tr', 'background:' + rowBg);
+      tr.appendChild(mk('td',
+        'padding:9px 12px;font-weight:700;color:' + D.text + ';border-bottom:1px solid ' + D.border,
+        escapeHTML(c.name)));
+      var tdDS = mk('td', 'padding:9px 12px;text-align:center;border-bottom:1px solid ' + D.border);
+      tdDS.appendChild(mk('span',
+        'display:inline-block;background:' + dc.bg + ';color:' + dc.c + ';border:1px solid ' + dc.bd +
+        ';padding:3px 10px;border-radius:12px;font-weight:800;font-family:' + T.fMono + ';font-size:11.5px',
+        dc.label + ' ' + c.dsPct.toFixed(2) + '%'));
+      tr.appendChild(tdDS);
+      [c.routes, c.total, c.delivered, c.failed, c.bags, c.spr, c.pending].forEach(function (v, i) {
+        var colr = i === 2 ? D.ok : (i === 3 && v > 0 ? D.err : (i === 6 && v > 0 ? D.warn : D.text));
+        tr.appendChild(mk('td',
+          'padding:9px 12px;text-align:center;font-family:' + T.fMono + ';color:' + colr +
+          ';font-weight:600;border-bottom:1px solid ' + D.border, fmt(v)));
+      });
+      var tdBar = mk('td', 'padding:9px 12px;border-bottom:1px solid ' + D.border + ';width:110px');
+      var barBg = mk('div', 'background:' + D.bgAlt2 + ';border-radius:4px;height:9px;overflow:hidden');
+      var barPct = maxTotal > 0 ? (c.total / maxTotal) * 100 : 0;
+      barBg.appendChild(mk('div',
+        'height:100%;width:' + barPct.toFixed(1) + '%;background:linear-gradient(90deg,' +
+        D.brand + ',' + D.brand2 + ')'));
+      tdBar.appendChild(barBg);
+      tr.appendChild(tdBar);
       carTbody.appendChild(tr);
     });
     carTbl.appendChild(carTbody);
-    right.appendChild(carTbl);
-    body.appendChild(right);
+    section1.appendChild(carTbl);
+    card.appendChild(section1);
 
-    // === RELATÓRIO POR CICLO ===
-    var cicloWrap = mk('div', 'grid-column:1 / -1;margin-top:6px');
-    cicloWrap.appendChild(mk('div',
-      'font-size:12px;font-weight:700;color:' + T.textHi + ';margin-bottom:8px;text-align:center;' +
-      'background:rgba(15,23,42,.6);padding:8px;border-radius:8px 8px 0 0', 'Relatório Por Ciclo'));
-    var cicloTbl = mk('table',
-      'width:100%;border-collapse:collapse;font-size:11px;background:rgba(15,23,42,.4);' +
-      'border-radius:0 0 8px 8px;overflow:hidden');
-    var cicloThead = mk('thead'); var cicloTrh = mk('tr');
-    ['Ciclo', 'Pacotes', 'Entregues', 'Falhas', '%DS', 'Rotas', 'Pendentes', 'Sacas'].forEach(function (h) {
-      cicloTrh.appendChild(mk('th',
-        'padding:8px 10px;text-align:left;font-size:9px;color:' + T.muted +
-        ';font-weight:700;text-transform:uppercase;background:rgba(15,23,42,.6);' +
-        'border-bottom:1px solid ' + T.border, h));
-    });
-    cicloThead.appendChild(cicloTrh); cicloTbl.appendChild(cicloThead);
-    var cicloTbody = mk('tbody');
+    // ===== CICLOS =====
+    var section2 = mk('div', 'padding:4px 24px 24px 24px;background:' + D.bg);
+    section2.appendChild(mk('div',
+      'font-size:14px;font-weight:800;color:' + D.text + ';margin-bottom:12px;display:flex;' +
+      'align-items:center;gap:8px',
+      '🔄 <span>Relatório por Ciclo</span>'));
+    var cicloGrid = mk('div', 'display:grid;grid-template-columns:repeat(4,1fr);gap:12px');
     ciclos.forEach(function (c) {
-      var color = dsStatusColor(c.dsPct);
-      var tr = mk('tr');
-      tr.appendChild(mk('td', 'padding:7px 10px;color:' + T.textHi + ';font-weight:700;' +
-        'border-bottom:1px solid ' + T.border, escapeHTML(c.ciclo)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
-        ';border-bottom:1px solid ' + T.border, fmt(c.total)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.ok +
-        ';border-bottom:1px solid ' + T.border, fmt(c.delivered)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' +
-        (c.failed > 0 ? T.err : T.muted) + ';border-bottom:1px solid ' + T.border, fmt(c.failed)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';font-weight:700;' +
-        'color:' + color + ';border-bottom:1px solid ' + T.border, c.dsPct.toFixed(2) + '%'));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
-        ';border-bottom:1px solid ' + T.border, fmt(c.routes)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' +
-        (c.pending > 0 ? T.warn : T.muted) + ';border-bottom:1px solid ' + T.border, fmt(c.pending)));
-      tr.appendChild(mk('td', 'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
-        ';border-bottom:1px solid ' + T.border, fmt(c.bags)));
-      cicloTbody.appendChild(tr);
+      var dc = dsColor(c.dsPct);
+      var box = mk('div',
+        'background:' + D.bgAlt + ';border:1px solid ' + D.border + ';border-top:4px solid ' + dc.c +
+        ';border-radius:10px;padding:14px');
+      box.appendChild(mk('div',
+        'font-size:13px;font-weight:800;color:' + D.text + ';margin-bottom:8px', c.ciclo));
+      box.appendChild(mk('div',
+        'display:inline-block;background:' + dc.bg + ';color:' + dc.c + ';padding:2px 10px;' +
+        'border-radius:10px;font-weight:800;font-family:' + T.fMono + ';font-size:13px;margin-bottom:10px',
+        c.dsPct.toFixed(2) + '%'));
+      function miniLine(lbl, val, color) {
+        return mk('div',
+          'display:flex;justify-content:space-between;font-size:11px;padding:2px 0',
+          '<span style="color:' + D.muted + '">' + lbl + '</span>' +
+          '<span style="color:' + (color || D.text) + ';font-weight:700;font-family:' + T.fMono + '">' +
+          val + '</span>');
+      }
+      box.appendChild(miniLine('Pacotes', fmt(c.total)));
+      box.appendChild(miniLine('Entregues', fmt(c.delivered), D.ok));
+      box.appendChild(miniLine('Falhas', fmt(c.failed), c.failed > 0 ? D.err : D.muted));
+      box.appendChild(miniLine('Rotas', fmt(c.routes)));
+      box.appendChild(miniLine('Pendentes', fmt(c.pending), c.pending > 0 ? D.warn : D.muted));
+      cicloGrid.appendChild(box);
     });
-    cicloTbl.appendChild(cicloTbody);
-    cicloWrap.appendChild(cicloTbl);
-    body.appendChild(cicloWrap);
+    section2.appendChild(cicloGrid);
+    card.appendChild(section2);
 
-    return wrap;
+    // ===== FOOTER =====
+    var footer = mk('div',
+      'padding:12px 24px;background:' + D.bgAlt + ';border-top:1px solid ' + D.border +
+      ';display:flex;justify-content:space-between;align-items:center');
+    footer.appendChild(mk('div',
+      'font-size:10px;color:' + D.muted, '🚚 Monitor Last Mile v' + APP.version));
+    footer.appendChild(mk('div',
+      'font-size:10px;color:' + D.muted + ';font-family:' + T.fMono,
+      'Mercado Livre · SSC ' + escapeHTML(STATE.ssc)));
+    card.appendChild(footer);
+
+    return card;
   }
 
   function renderKPIs() {
@@ -2838,8 +2914,12 @@
   function openFechamentoModal() {
     var modal = openModal({ title: 'Gerar Fechamento Consolidado', width: '860px' });
 
+    // ⚠️ AJUSTE AQUI: códigos reais dos SSCs que somam no modo GERAL.
+    // O primeiro item da lista é o usado no modo "SVC".
+    var CONSOLIDATE_SSCS = ['SRJ3', 'ERJ2', 'ERJ5']; // <- troque ERJ2/ERJ5 pelos certos
+
     // Estado interno do modal
-    var consolidatedData = null;  // { SRJ3: [...], ERJ2: [...], ERJ5: [...] }
+    var consolidatedData = null;  // { <sscId>: [...routes] }
     var loading = false;
 
     // === TOP: botão consolidar + status ===
@@ -2847,7 +2927,8 @@
       'display:flex;gap:10px;align-items:center;margin-bottom:14px;padding:12px;' +
       'background:' + T.surface + ';border:1px solid ' + T.border + ';border-radius:10px');
     var btnConsolidar = mk('button', '',
-      '<span id="mlm_fech_btn_icon">🔄</span><span id="mlm_fech_btn_lbl">Consolidar SRJ3 + ERJ2 + ERJ5</span>');
+      '<span id="mlm_fech_btn_icon">🔄</span><span id="mlm_fech_btn_lbl">Consolidar ' +
+      CONSOLIDATE_SSCS.join(' + ') + '</span>');
     btnConsolidar.style.cssText = 'background:' + T.grad + ';border:none;color:#fff;padding:10px 18px;' +
       'border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;' +
       'align-items:center;gap:8px';
@@ -2885,7 +2966,8 @@
     dashModeToggle.appendChild(btnModeSVC);
     modal.body.insertBefore(dashModeToggle, grid);
 
-    var dashboardWrap = mk('div', 'display:none');
+    var dashboardWrap = mk('div',
+      'display:none;padding:20px;background:rgba(2,6,23,.35);border-radius:14px');
     modal.body.insertBefore(dashboardWrap, grid);
 
     var currentDashMode = 'geral';
@@ -2920,7 +3002,7 @@
       dashboardWrap.style.display = 'block';
       dashModeToggle.style.display = 'flex';
       setActiveViewBtn('dash');
-      modal.box.style.width = '1160px';
+      modal.box.style.width = '1220px';
       btnPDF.style.display = 'none';
       btnCopiar.style.display = 'none';
       btnPDFDash.style.display = 'inline-flex';
@@ -2938,15 +3020,16 @@
           'padding:40px;text-align:center;color:' + T.muted, 'Consolide os dados primeiro.'));
         return;
       }
-      var routesForDash;
+      var routesForDash = [];
       if (currentDashMode === 'geral') {
-        routesForDash = [].concat(consolidatedData.SRJ3 || [], consolidatedData.ERJ2 || [], consolidatedData.ERJ5 || [])
-          .filter(function (r) { return r.status !== 'A caminho do destino'; });
+        CONSOLIDATE_SSCS.forEach(function (s) {
+          routesForDash = routesForDash.concat(consolidatedData[s] || []);
+        });
       } else {
-        routesForDash = (consolidatedData[STATE.ssc] || consolidatedData.SRJ3 || [])
-          .filter(function (r) { return r.status !== 'A caminho do destino'; });
+        routesForDash = consolidatedData[CONSOLIDATE_SSCS[0]] || [];
       }
-      dashboardWrap.appendChild(buildDashboardVisual(routesForDash, currentDashMode));
+      routesForDash = routesForDash.filter(function (r) { return r.status !== 'A caminho do destino'; });
+      dashboardWrap.appendChild(buildDashboardVisual(routesForDash, currentDashMode, CONSOLIDATE_SSCS));
     }
     var form = mk('div', 'display:flex;flex-direction:column;gap:10px');
     grid.appendChild(form);
@@ -3032,48 +3115,53 @@
       btnConsolidar.style.opacity = '0.6';
       document.getElementById('mlm_fech_btn_icon').textContent = '⏳';
       document.getElementById('mlm_fech_btn_lbl').textContent = 'Buscando...';
-      statusLbl.textContent = 'Buscando SRJ3, ERJ2 e ERJ5 em paralelo...';
+      statusLbl.textContent = 'Buscando ' + CONSOLIDATE_SSCS.join(', ') + ' em paralelo...';
       statusLbl.style.color = T.brand2;
 
       var startedAt = Date.now();
-      Promise.all([
-        fetchRoutesFromSSC('SRJ3').catch(function (e) { console.warn('SRJ3 falhou', e); return []; }),
-        fetchRoutesFromSSC('ERJ2').catch(function (e) { console.warn('ERJ2 falhou', e); return []; }),
-        fetchRoutesFromSSC('ERJ5').catch(function (e) { console.warn('ERJ5 falhou', e); return []; })
-      ]).then(function (results) {
-        consolidatedData = {
-          SRJ3: results[0],
-          ERJ2: results[1],
-          ERJ5: results[2]
-        };
-        var total = results[0].length + results[1].length + results[2].length;
+      Promise.all(CONSOLIDATE_SSCS.map(function (sscId) {
+        return fetchRoutesFromSSC(sscId).catch(function (e) {
+          console.warn('[MLM] ' + sscId + ' falhou', e);
+          return [];
+        });
+      })).then(function (results) {
+        consolidatedData = {};
+        var total = 0;
+        var partsLbl = [];
+        var zerados = [];
+        CONSOLIDATE_SSCS.forEach(function (sscId, i) {
+          consolidatedData[sscId] = results[i];
+          total += results[i].length;
+          partsLbl.push(sscId + ': ' + results[i].length);
+          if (results[i].length === 0) zerados.push(sscId);
+        });
         var elapsed = Date.now() - startedAt;
         statusLbl.innerHTML = '✅ <b style="color:' + T.ok + '">' + total + ' rotas</b> · ' +
-          'SRJ3: ' + results[0].length + ' · ERJ2: ' + results[1].length +
-          ' · ERJ5: ' + results[2].length + ' · <span style="color:' + T.muted + '">' +
-          elapsed + 'ms</span>';
+          partsLbl.join(' · ') + ' · <span style="color:' + T.muted + '">' + elapsed + 'ms</span>' +
+          (zerados.length > 0 ? '<br><span style="color:' + T.warn + '">⚠️ ' + zerados.join(', ') +
+            ' retornou(aram) 0 rotas — confira o código do SSC</span>' : '');
         document.getElementById('mlm_fech_btn_icon').textContent = '🔄';
         document.getElementById('mlm_fech_btn_lbl').textContent = 'Atualizar consolidação';
         btnConsolidar.disabled = false;
         btnConsolidar.style.opacity = '1';
         loading = false;
 
-        // Busca detalhes de insucessos das 3 origens (async, atualiza preview quando termina)
         var comInsuc = [];
-        [].concat(results[0], results[1], results[2]).forEach(function (r) {
-          if ((r.failed || 0) > 0 && (!r.failures || r.failures.length === 0)) {
-            comInsuc.push(r);
-          }
+        Object.keys(consolidatedData).forEach(function (k) {
+          consolidatedData[k].forEach(function (r) {
+            if ((r.failed || 0) > 0 && (!r.failures || r.failures.length === 0)) comInsuc.push(r);
+          });
         });
         if (comInsuc.length > 0) {
           statusLbl.innerHTML += ' · <span style="color:' + T.warn + '">🔍 buscando motivos de ' +
             comInsuc.length + ' rotas...</span>';
           fetchAllFailures(comInsuc).then(function () {
-            statusLbl.innerHTML = statusLbl.innerHTML.replace(/🔍.*$/, '🎯 motivos carregados');
             refresh();
+            if (dashboardWrap.style.display !== 'none') renderDashboard();
           });
         }
         refresh();
+        if (dashboardWrap.style.display !== 'none') renderDashboard();
       }).catch(function (err) {
         statusLbl.textContent = '❌ Erro: ' + err.message;
         statusLbl.style.color = T.err;
