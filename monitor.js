@@ -753,225 +753,333 @@
 
   // Monta o dashboard visual (chamado dentro do modal de Fechamento)
   function buildDashboardVisual(routes, modeLabel, breakdown) {
-    var stats = getDSStats(routes);
-    var carriers = aggregateByCarrier(routes);
-    var ciclos = aggregateByCiclo(routes);
+  var stats = getDSStats(routes);
+  var carriers = aggregateByCarrier(routes);
+  var ciclos = aggregateByCiclo(routes);
 
-    function dsColor(pct) {
-      if (pct >= 99) return T.ok;
-      if (pct >= 98) return T.warn;
-      return T.err;
-    }
-
-    var totalRoutes = routes.length;
-    var pendentes = Math.max(0, stats.total - stats.delivered - stats.failed - stats.foraDS);
-    var pctInsucesso = stats.baseDS > 0 ? (stats.failed / stats.baseDS) * 100 : 0;
-    var pctPendente = stats.total > 0 ? (pendentes / stats.total) * 100 : 0;
-    var mainColor = dsColor(stats.dsPct);
-    var meta = 98.5;
-    var metaOk = stats.dsPct >= meta;
-    var sprGeral = totalRoutes > 0 ? Math.round(stats.total / totalRoutes) : 0;
-
-    // Card em modo PAISAGEM (largura maior que altura)
-    var card = mk('div',
-      'width:1040px;margin:0 auto;background:linear-gradient(180deg,' + T.bg + ' 0%,' + T.bgPurple +
-      ' 100%);border-radius:16px;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,.5);' +
-      'font-family:' + T.fUI + ';color:' + T.text);
-    card.dataset.mlmDashboardCard = '1';
-
-    // ===== HEADER =====
-    var header = mk('div', 'background:' + T.grad + ';padding:20px 26px;position:relative;overflow:hidden');
-    header.appendChild(mk('div',
-      'position:absolute;top:-50px;right:-50px;width:200px;height:200px;border-radius:50%;' +
-      'background:rgba(255,255,255,.07)'));
-    var hdrTop = mk('div', 'display:flex;align-items:center;justify-content:space-between;position:relative;z-index:1');
-    var hdrLeft = mk('div');
-    hdrLeft.appendChild(mk('div',
-      'font-size:22px;font-weight:900;color:#fff;letter-spacing:.5px',
-      '📦 MONITORAMENTO ' + escapeHTML(STATE.ssc)));
-    hdrLeft.appendChild(mk('div',
-      'font-size:10px;font-weight:700;color:rgba(255,255,255,.75);letter-spacing:2px;' +
-      'text-transform:uppercase;margin-top:3px',
-      'Resumo Operacional · Performance Final'));
-    hdrTop.appendChild(hdrLeft);
-
-    var modeBadge = mk('div',
-      'background:rgba(255,255,255,.18);border:1.5px solid rgba(255,255,255,.4);' +
-      'padding:6px 16px;border-radius:10px;text-align:center');
-    modeBadge.appendChild(mk('div',
-      'font-size:9px;font-weight:700;color:rgba(255,255,255,.7);letter-spacing:1.5px', 'MODO'));
-    modeBadge.appendChild(mk('div',
-      'font-size:16px;font-weight:900;color:#fff;letter-spacing:1px;font-style:italic',
-      modeLabel === 'geral' ? 'GERAL' : 'SVC'));
-    hdrTop.appendChild(modeBadge);
-    header.appendChild(hdrTop);
-
-    var now = new Date();
-    var d0 = new Date(STATE.date + 'T12:00:00');
-    var breakdownTxt = '';
-    if (breakdown && breakdown.length > 0) {
-      var topOrigens = breakdown.slice(0, 6);
-      breakdownTxt = '  ·  ' + topOrigens.map(function (b) { return b.origem + ': ' + fmt(b.count); }).join(' · ');
-      if (breakdown.length > 6) breakdownTxt += ' · +' + (breakdown.length - 6) + ' outras';
-    }
-    header.appendChild(mk('div',
-      'font-size:9.5px;color:rgba(255,255,255,.65);margin-top:8px;font-family:' + T.fMono +
-      ';position:relative;z-index:1',
-      '📅 ' + pad(d0.getDate()) + '/' + pad(d0.getMonth() + 1) + '/' + d0.getFullYear() +
-      '  ·  🕐 ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + breakdownTxt));
-    card.appendChild(header);
-
-    // ===== BODY: 2 colunas — performance (esquerda) + transportadoras (direita) =====
-    var body = mk('div', 'display:grid;grid-template-columns:230px 1fr;gap:0');
-
-    var left = mk('div',
-      'padding:20px;border-right:1px solid ' + T.border + ';display:flex;flex-direction:column;gap:12px');
-
-    var dsBox = mk('div', 'text-align:center;padding:10px 0');
-    dsBox.appendChild(mk('div',
-      'font-size:38px;font-weight:900;color:' + mainColor + ';font-family:' + T.fMono + ';line-height:1',
-      stats.dsPct.toFixed(2) + '%'));
-    dsBox.appendChild(mk('div',
-      'font-size:10px;font-weight:700;color:' + T.muted + ';letter-spacing:1.5px;margin-top:4px',
-      'DS OPERACIONAL'));
-    left.appendChild(dsBox);
-
-    var metaTag = mk('div',
-      'padding:6px 10px;border-radius:8px;text-align:center;font-size:10px;font-weight:700;' +
-      'background:' + (metaOk ? 'rgba(16,185,129,.15)' : 'rgba(245,158,11,.15)') +
-      ';color:' + (metaOk ? T.ok : T.warn) + ';border:1px solid ' + (metaOk ? T.ok : T.warn),
-      (metaOk ? '✅' : '⚠️') + ' Meta ' + meta.toFixed(1).replace('.', ',') + '%');
-    left.appendChild(metaTag);
-
-    var miniTbl = mk('table',
-      'width:100%;border-collapse:collapse;font-size:11px;background:rgba(15,23,42,.4);' +
-      'border-radius:8px;overflow:hidden;margin-top:4px');
-    function miniRow(label, val, color) {
-      var tr = mk('tr');
-      tr.appendChild(mk('td',
-        'padding:6px 10px;color:' + T.muted + ';font-weight:600;border-bottom:1px solid ' + T.border,
-        escapeHTML(label)));
-      tr.appendChild(mk('td',
-        'padding:6px 10px;text-align:right;font-family:' + T.fMono + ';font-weight:700;' +
-        'border-bottom:1px solid ' + T.border + ';color:' + (color || T.textHi),
-        escapeHTML(String(val))));
-      return tr;
-    }
-    miniTbl.appendChild(miniRow('Rotas', fmt(totalRoutes)));
-    miniTbl.appendChild(miniRow('SPR', fmt(sprGeral)));
-    miniTbl.appendChild(miniRow('Total Pcts', fmt(stats.total)));
-    miniTbl.appendChild(miniRow('Entregues', fmt(stats.delivered), T.ok));
-    miniTbl.appendChild(miniRow('Pendentes', fmt(pendentes), T.warn));
-    miniTbl.appendChild(miniRow('Insucessos', fmt(stats.failed), T.err));
-    miniTbl.appendChild(miniRow('% Insuc.', pctInsucesso.toFixed(2) + '%', T.err));
-    miniTbl.appendChild(miniRow('% Pend.', pctPendente.toFixed(1) + '%', T.warn));
-    left.appendChild(miniTbl);
-    body.appendChild(left);
-
-    var right = mk('div', 'padding:20px');
-    right.appendChild(mk('div',
-      'font-size:13px;font-weight:800;color:' + T.textHi + ';margin-bottom:10px',
-      '🏢 Performance por Transportadora'));
-
-    var carTbl = mk('table',
-      'width:100%;border-collapse:separate;border-spacing:0;font-size:11px;' +
-      'border-radius:8px;overflow:hidden;border:1px solid ' + T.border);
-    var carThead = mk('thead');
-    var carTrh = mk('tr');
-    ['Transportadora', '%DS', 'Rotas', 'Total', 'Entreg.', 'Falhas', 'Sacas', 'SPR', 'Pend.'].forEach(function (h, i) {
-      carTrh.appendChild(mk('th',
-        'padding:8px 10px;text-align:' + (i === 0 ? 'left' : 'center') + ';font-size:9px;color:' + T.muted +
-        ';font-weight:700;text-transform:uppercase;background:rgba(15,23,42,.6);' +
-        'border-bottom:1px solid ' + T.border, h));
-    });
-    carThead.appendChild(carTrh); carTbl.appendChild(carThead);
-    var carTbody = mk('tbody');
-    carriers.forEach(function (c, idx) {
-      var color = dsColor(c.dsPct);
-      var rowBg = idx % 2 === 0 ? 'transparent' : 'rgba(15,23,42,.25)';
-      var tr = mk('tr', 'background:' + rowBg);
-      tr.appendChild(mk('td',
-        'padding:7px 10px;font-weight:700;color:' + T.textHi + ';border-bottom:1px solid ' + T.border,
-        escapeHTML(c.name)));
-      tr.appendChild(mk('td',
-        'padding:7px 10px;text-align:center;font-family:' + T.fMono + ';font-weight:800;color:' + color +
-        ';border-bottom:1px solid ' + T.border, c.dsPct.toFixed(2) + '%'));
-      [c.routes, c.total, c.delivered, c.failed, c.bags, c.spr, c.pending].forEach(function (v, i) {
-        var colr = i === 2 ? T.ok : (i === 3 && v > 0 ? T.err : (i === 6 && v > 0 ? T.warn : T.mutedHi));
-        tr.appendChild(mk('td',
-          'padding:7px 10px;text-align:center;font-family:' + T.fMono + ';color:' + colr +
-          ';border-bottom:1px solid ' + T.border, fmt(v)));
-      });
-      carTbody.appendChild(tr);
-    });
-    carTbl.appendChild(carTbody);
-    right.appendChild(carTbl);
-    body.appendChild(right);
-    card.appendChild(body);
-
-    // ===== CICLOS (tabela horizontal full-width) =====
-    var cicloSection = mk('div', 'padding:16px 20px 20px 20px;border-top:1px solid ' + T.border);
-    cicloSection.appendChild(mk('div',
-      'font-size:13px;font-weight:800;color:' + T.textHi + ';margin-bottom:10px',
-      '🔄 Relatório por Ciclo'));
-    var cicloTbl = mk('table',
-      'width:100%;border-collapse:separate;border-spacing:0;font-size:11px;' +
-      'border-radius:8px;overflow:hidden;border:1px solid ' + T.border);
-    var cicloThead = mk('thead');
-    var cicloTrh = mk('tr');
-    ['Ciclo', 'Pacotes', 'Entregues', 'Falhas', '%DS', 'Rotas', 'Pendentes', 'Sacas'].forEach(function (h) {
-      cicloTrh.appendChild(mk('th',
-        'padding:8px 10px;text-align:left;font-size:9px;color:' + T.muted +
-        ';font-weight:700;text-transform:uppercase;background:rgba(15,23,42,.6);' +
-        'border-bottom:1px solid ' + T.border, h));
-    });
-    cicloThead.appendChild(cicloTrh); cicloTbl.appendChild(cicloThead);
-    var cicloTbody = mk('tbody');
-    ciclos.forEach(function (c, idx) {
-      var color = dsColor(c.dsPct);
-      var rowBg = idx % 2 === 0 ? 'transparent' : 'rgba(15,23,42,.25)';
-      var tr = mk('tr', 'background:' + rowBg);
-      tr.appendChild(mk('td',
-        'padding:7px 10px;color:' + T.textHi + ';font-weight:700;border-bottom:1px solid ' + T.border,
-        escapeHTML(c.ciclo)));
-      tr.appendChild(mk('td',
-        'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
-        ';border-bottom:1px solid ' + T.border, fmt(c.total)));
-      tr.appendChild(mk('td',
-        'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.ok +
-        ';border-bottom:1px solid ' + T.border, fmt(c.delivered)));
-      tr.appendChild(mk('td',
-        'padding:7px 10px;font-family:' + T.fMono + ';color:' + (c.failed > 0 ? T.err : T.muted) +
-        ';border-bottom:1px solid ' + T.border, fmt(c.failed)));
-      tr.appendChild(mk('td',
-        'padding:7px 10px;font-family:' + T.fMono + ';font-weight:800;color:' + color +
-        ';border-bottom:1px solid ' + T.border, c.dsPct.toFixed(2) + '%'));
-      tr.appendChild(mk('td',
-        'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
-        ';border-bottom:1px solid ' + T.border, fmt(c.routes)));
-      tr.appendChild(mk('td',
-        'padding:7px 10px;font-family:' + T.fMono + ';color:' + (c.pending > 0 ? T.warn : T.muted) +
-        ';border-bottom:1px solid ' + T.border, fmt(c.pending)));
-      tr.appendChild(mk('td',
-        'padding:7px 10px;font-family:' + T.fMono + ';color:' + T.mutedHi +
-        ';border-bottom:1px solid ' + T.border, fmt(c.bags)));
-      cicloTbody.appendChild(tr);
-    });
-    cicloTbl.appendChild(cicloTbody);
-    cicloSection.appendChild(cicloTbl);
-    card.appendChild(cicloSection);
-
-    // ===== FOOTER =====
-    var footer = mk('div',
-      'padding:10px 20px;background:rgba(15,23,42,.5);border-top:1px solid ' + T.border +
-      ';display:flex;justify-content:space-between;align-items:center');
-    footer.appendChild(mk('div', 'font-size:9px;color:' + T.muted, '🚚 Monitor Last Mile v' + APP.version));
-    footer.appendChild(mk('div',
-      'font-size:9px;color:' + T.muted + ';font-family:' + T.fMono, 'Mercado Livre · ' + escapeHTML(STATE.ssc)));
-    card.appendChild(footer);
-
-    return card;
+  function dsColor(pct) {
+    if (pct >= 99) return T.ok;
+    if (pct >= 98) return T.warn;
+    return T.err;
   }
+
+  function metric(label, value, color) {
+    var box = mk('div',
+      'background:rgba(15,23,42,.72);border:1px solid ' + T.border +
+      ';border-radius:14px;padding:14px 16px;min-height:72px');
+
+    box.appendChild(mk('div',
+      'font-size:11px;color:' + T.muted +
+      ';font-weight:800;text-transform:uppercase;letter-spacing:.8px',
+      escapeHTML(label)));
+
+    box.appendChild(mk('div',
+      'font-size:23px;color:' + (color || T.textHi) +
+      ';font-weight:900;font-family:' + T.fMono + ';margin-top:7px',
+      escapeHTML(String(value))));
+
+    return box;
+  }
+
+  var totalRoutes = routes.length;
+  var pendentes = Math.max(
+    0,
+    stats.total - stats.delivered - stats.failed - stats.foraDS
+  );
+
+  var sprGeral = totalRoutes > 0
+    ? Math.round(stats.total / totalRoutes)
+    : 0;
+
+  var pctInsucesso = stats.baseDS > 0
+    ? (stats.failed / stats.baseDS) * 100
+    : 0;
+
+  var mainColor = dsColor(stats.dsPct);
+  var meta = 98.5;
+  var metaOk = stats.dsPct >= meta;
+
+  /*
+   * 760px é mais legível no celular.
+   * A imagem ficará vertical conforme aumentarem as transportadoras.
+   */
+  var card = mk('div',
+    'width:760px;margin:0 auto;' +
+    'background:linear-gradient(180deg,' + T.bg + ' 0%,' + T.bgPurple + ' 100%);' +
+    'border-radius:20px;overflow:hidden;' +
+    'box-shadow:0 25px 60px rgba(0,0,0,.55);' +
+    'font-family:' + T.fUI + ';color:' + T.text);
+
+  card.dataset.mlmDashboardCard = '1';
+
+  // ============================================================
+  // HEADER
+  // ============================================================
+  var header = mk('div',
+    'background:' + T.grad + ';padding:25px 28px;position:relative;overflow:hidden');
+
+  header.appendChild(mk('div',
+    'position:absolute;right:-70px;top:-80px;width:260px;height:260px;' +
+    'border-radius:50%;background:rgba(255,255,255,.08)'));
+
+  var headerTop = mk('div',
+    'display:flex;align-items:center;justify-content:space-between;' +
+    'gap:20px;position:relative;z-index:1');
+
+  var headerText = mk('div');
+
+  headerText.appendChild(mk('div',
+    'font-size:27px;font-weight:950;color:#fff;letter-spacing:.3px',
+    '📦 MONITORAMENTO ' + escapeHTML(STATE.ssc)));
+
+  headerText.appendChild(mk('div',
+    'font-size:11px;color:rgba(255,255,255,.8);font-weight:800;' +
+    'letter-spacing:1.8px;text-transform:uppercase;margin-top:5px',
+    'Resumo operacional · Performance final'));
+
+  var modeBadge = mk('div',
+    'min-width:90px;background:rgba(255,255,255,.17);' +
+    'border:1.5px solid rgba(255,255,255,.48);border-radius:13px;' +
+    'padding:9px 14px;text-align:center');
+
+  modeBadge.appendChild(mk('div',
+    'font-size:9px;color:rgba(255,255,255,.72);font-weight:800;letter-spacing:1.5px',
+    'MODO'));
+
+  modeBadge.appendChild(mk('div',
+    'font-size:18px;color:#fff;font-weight:950;margin-top:2px',
+    modeLabel === 'geral' ? 'GERAL' : 'SVC'));
+
+  headerTop.appendChild(headerText);
+  headerTop.appendChild(modeBadge);
+  header.appendChild(headerTop);
+
+  var now = new Date();
+  var d0 = new Date(STATE.date + 'T12:00:00');
+
+  header.appendChild(mk('div',
+    'position:relative;z-index:1;margin-top:13px;font-size:11px;' +
+    'color:rgba(255,255,255,.82);font-family:' + T.fMono,
+    '📅 ' + pad(d0.getDate()) + '/' + pad(d0.getMonth() + 1) + '/' +
+    d0.getFullYear() + '  ·  🕐 ' + pad(now.getHours()) + ':' +
+    pad(now.getMinutes())));
+
+  card.appendChild(header);
+
+  // ============================================================
+  // DS PRINCIPAL
+  // ============================================================
+  var dsSection = mk('div',
+    'padding:24px 26px 18px;border-bottom:1px solid ' + T.border);
+
+  var dsRow = mk('div',
+    'display:flex;align-items:center;justify-content:space-between;gap:18px');
+
+  var dsLeft = mk('div');
+
+  dsLeft.appendChild(mk('div',
+    'font-size:44px;line-height:1;font-weight:950;color:' + mainColor +
+    ';font-family:' + T.fMono,
+    stats.dsPct.toFixed(2) + '%'));
+
+  dsLeft.appendChild(mk('div',
+    'font-size:11px;color:' + T.muted + ';font-weight:800;' +
+    'letter-spacing:1.6px;margin-top:7px',
+    'DS OPERACIONAL'));
+
+  var metaTag = mk('div',
+    'padding:10px 16px;border-radius:12px;font-size:12px;font-weight:850;' +
+    'background:' + (metaOk
+      ? 'rgba(16,185,129,.14)'
+      : 'rgba(245,158,11,.14)') +
+    ';color:' + (metaOk ? T.ok : T.warn) +
+    ';border:1px solid ' + (metaOk ? T.ok : T.warn),
+    (metaOk ? '✅' : '⚠️') + ' Meta ' +
+    meta.toFixed(1).replace('.', ',') + '%');
+
+  dsRow.appendChild(dsLeft);
+  dsRow.appendChild(metaTag);
+  dsSection.appendChild(dsRow);
+
+  var metrics = mk('div',
+    'display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:20px');
+
+  metrics.appendChild(metric('Rotas', fmt(totalRoutes), T.brand2));
+  metrics.appendChild(metric('SPR', fmt(sprGeral), T.info));
+  metrics.appendChild(metric('Total pacotes', fmt(stats.total), T.textHi));
+  metrics.appendChild(metric('Entregues', fmt(stats.delivered), T.ok));
+  metrics.appendChild(metric('Pendentes', fmt(pendentes), T.warn));
+  metrics.appendChild(metric('Insucessos', fmt(stats.failed), T.err));
+
+  dsSection.appendChild(metrics);
+
+  var rateLine = mk('div',
+    'display:flex;gap:10px;margin-top:10px');
+
+  rateLine.appendChild(metric(
+    '% Insucesso',
+    pctInsucesso.toFixed(2) + '%',
+    T.err
+  ));
+
+  if (stats.naoAgencia > 0) {
+    rateLine.appendChild(metric(
+      'Coletas',
+      fmt(stats.naoAgencia),
+      T.mutedHi
+    ));
+  }
+
+  if (stats.transferidos > 0) {
+    rateLine.appendChild(metric(
+      'Transferidos',
+      fmt(stats.transferidos),
+      T.mutedHi
+    ));
+  }
+
+  dsSection.appendChild(rateLine);
+  card.appendChild(dsSection);
+
+  // ============================================================
+  // TRANSPORTADORAS EM CARDS
+  // ============================================================
+  var carriersSection = mk('div',
+    'padding:22px 26px;border-bottom:1px solid ' + T.border);
+
+  carriersSection.appendChild(mk('div',
+    'font-size:17px;font-weight:900;color:' + T.textHi + ';margin-bottom:14px',
+    '🏢 Performance por Transportadora'));
+
+  var carrierList = mk('div',
+    'display:flex;flex-direction:column;gap:10px');
+
+  carriers.forEach(function (c, index) {
+    var color = dsColor(c.dsPct);
+
+    var carrierCard = mk('div',
+      'background:rgba(15,23,42,.65);border:1px solid ' + T.border +
+      ';border-left:4px solid ' + color +
+      ';border-radius:13px;padding:13px 15px');
+
+    var top = mk('div',
+      'display:flex;align-items:center;justify-content:space-between;gap:14px');
+
+    top.appendChild(mk('div',
+      'font-size:14px;font-weight:850;color:' + T.textHi,
+      (index + 1) + '. ' + escapeHTML(c.name)));
+
+    top.appendChild(mk('div',
+      'font-size:17px;font-weight:950;color:' + color +
+      ';font-family:' + T.fMono,
+      c.dsPct.toFixed(2) + '%'));
+
+    carrierCard.appendChild(top);
+
+    var row = mk('div',
+      'display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:11px');
+
+    function carrierValue(label, value, colorValue) {
+      var el = mk('div',
+        'background:rgba(30,41,59,.55);border-radius:8px;padding:8px');
+
+      el.appendChild(mk('div',
+        'font-size:8px;color:' + T.muted + ';font-weight:750;' +
+        'text-transform:uppercase;letter-spacing:.5px',
+        escapeHTML(label)));
+
+      el.appendChild(mk('div',
+        'font-size:13px;color:' + (colorValue || T.mutedHi) +
+        ';font-weight:850;font-family:' + T.fMono + ';margin-top:4px',
+        escapeHTML(String(value))));
+
+      return el;
+    }
+
+    row.appendChild(carrierValue('Rotas', fmt(c.routes)));
+    row.appendChild(carrierValue('Pacotes', fmt(c.total)));
+    row.appendChild(carrierValue('Entregues', fmt(c.delivered), T.ok));
+    row.appendChild(carrierValue('Falhas', fmt(c.failed), c.failed > 0 ? T.err : T.muted));
+    row.appendChild(carrierValue('Sacas', fmt(c.bags)));
+    row.appendChild(carrierValue('SPR', fmt(c.spr)));
+    row.appendChild(carrierValue('Pendentes', fmt(c.pending), c.pending > 0 ? T.warn : T.muted));
+
+    carrierCard.appendChild(row);
+    carrierList.appendChild(carrierCard);
+  });
+
+  carriersSection.appendChild(carrierList);
+  card.appendChild(carriersSection);
+
+  // ============================================================
+  // CICLOS
+  // ============================================================
+  var cycleSection = mk('div', 'padding:22px 26px');
+
+  cycleSection.appendChild(mk('div',
+    'font-size:17px;font-weight:900;color:' + T.textHi + ';margin-bottom:14px',
+    '🔄 Relatório por Ciclo'));
+
+  var cycleGrid = mk('div',
+    'display:grid;grid-template-columns:repeat(2,1fr);gap:11px');
+
+  ciclos.forEach(function (c) {
+    var color = dsColor(c.dsPct);
+
+    var cycle = mk('div',
+      'background:rgba(15,23,42,.65);border:1px solid ' + T.border +
+      ';border-top:3px solid ' + color +
+      ';border-radius:13px;padding:14px');
+
+    var cycleTop = mk('div',
+      'display:flex;justify-content:space-between;align-items:center');
+
+    cycleTop.appendChild(mk('div',
+      'font-size:16px;color:' + T.textHi + ';font-weight:900',
+      escapeHTML(c.ciclo)));
+
+    cycleTop.appendChild(mk('div',
+      'font-size:16px;color:' + color + ';font-weight:950;font-family:' + T.fMono,
+      c.dsPct.toFixed(2) + '%'));
+
+    cycle.appendChild(cycleTop);
+
+    cycle.appendChild(mk('div',
+      'font-size:11px;color:' + T.mutedHi + ';font-family:' + T.fMono +
+      ';line-height:1.8;margin-top:9px',
+      '📦 ' + fmt(c.total) +
+      ' &nbsp; ✅ ' + fmt(c.delivered) +
+      ' &nbsp; 🔴 ' + fmt(c.failed) + '<br>' +
+      '🛣️ ' + fmt(c.routes) +
+      ' rotas &nbsp; ⏳ ' + fmt(c.pending) +
+      ' &nbsp; Sacas ' + fmt(c.bags)));
+
+    cycleGrid.appendChild(cycle);
+  });
+
+  cycleSection.appendChild(cycleGrid);
+  card.appendChild(cycleSection);
+
+  // ============================================================
+  // FOOTER
+  // ============================================================
+  var footer = mk('div',
+    'padding:13px 26px;background:rgba(15,23,42,.65);' +
+    'border-top:1px solid ' + T.border +
+    ';display:flex;justify-content:space-between;align-items:center');
+
+  footer.appendChild(mk('div',
+    'font-size:10px;color:' + T.muted,
+    '🚚 Monitor Last Mile v' + APP.version));
+
+  footer.appendChild(mk('div',
+    'font-size:10px;color:' + T.muted + ';font-family:' + T.fMono,
+    'Mercado Livre · ' + escapeHTML(STATE.ssc)));
+
+  card.appendChild(footer);
+
+  return card;
+}
 
   function renderKPIs() {
     var all = STATE.routes || [];
@@ -3526,9 +3634,8 @@
   }
   // Converte um elemento em imagem via SVG+foreignObject (100% nativo, sem CDN, imune a CSP)
   function elementToSvgDataUrl(el) {
-    var rect = el.getBoundingClientRect();
-    var w = Math.ceil(rect.width);
-    var h = Math.ceil(rect.height);
+    var w = Math.ceil(el.scrollWidth || el.offsetWidth);
+    var h = Math.ceil(el.scrollHeight || el.offsetHeight);
     var htmlContent = el.outerHTML;
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">' +
       '<foreignObject width="100%" height="100%">' +
@@ -3550,7 +3657,7 @@
       var img = new Image();
       img.onload = function () {
         try {
-          var scale = 2; // maior resolução
+          var scale = 3; // maior resolução
           var canvas = document.createElement('canvas');
           canvas.width = svgData.width * scale;
           canvas.height = svgData.height * scale;
