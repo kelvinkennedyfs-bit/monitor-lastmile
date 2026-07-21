@@ -2854,12 +2854,12 @@
     var textoWA =
       '*🚚 ' + STATE.ssc + ' • REPORT ' + horaFmt + ' • ' + dataFmt + '*\n' +
       (hasFilters ? '_⚙️ Filtros aplicados — ' + routes.length + ' rotas_\n' : '') +
-      '━━━━━━━━━━━━━━━━━━━━\n\n' +
+      '━━━━━━━━━━━━━━━━\n\n' +
       '📦 *Pacotes:* ' + fmt(stats.total) + '\n' +
       '✅ *Entregues:* ' + fmt(stats.delivered) + ' (' + stats.dsPct.toFixed(1) + '%)\n' +
       '⏳ *Pendentes:* ' + fmt(pendentes) + '\n' +
       '🔴 *Insucessos:* ' + fmt(stats.failed) +
-        (stats.foraDS > 0 ? '  _(+' + stats.foraDS + ' fora DS)_' : '') + '\n' +
+        (statsSVC.naoAgencia > 0 ? '  _(+' + statsSVC.naoAgencia + ' Coleta)_' : '') + '\n' +
       '🟡 *PNR:* ' + fmt(stats.pnr) + '\n\n' +
       '*🎯 DS Operacional:* ' + dsEmoji + ' *' + stats.dsPct.toFixed(2) + '%*\n\n' +
       '*🛣️ Rotas:* ' + routes.length + ' total\n' +
