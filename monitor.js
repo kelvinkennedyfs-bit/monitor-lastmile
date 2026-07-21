@@ -757,31 +757,59 @@
   var carriers = aggregateByCarrier(routes);
   var ciclos = aggregateByCiclo(routes);
 
-  function dsColor(pct) {
-    if (pct >= 99) return T.ok;
-    if (pct >= 98) return T.warn;
+  function dsColor(value) {
+    if (value >= 99) return T.ok;
+    if (value >= 98) return T.warn;
     return T.err;
   }
 
   function metric(label, value, color) {
     var box = mk('div',
       'background:rgba(15,23,42,.72);border:1px solid ' + T.border +
-      ';border-radius:14px;padding:14px 16px;min-height:72px');
+      ';border-radius:10px;padding:12px 14px;min-height:67px');
 
     box.appendChild(mk('div',
-      'font-size:11px;color:' + T.muted +
-      ';font-weight:800;text-transform:uppercase;letter-spacing:.8px',
+      'font-size:10px;color:' + T.muted +
+      ';font-weight:800;text-transform:uppercase;letter-spacing:.7px',
       escapeHTML(label)));
 
     box.appendChild(mk('div',
-      'font-size:23px;color:' + (color || T.textHi) +
-      ';font-weight:900;font-family:' + T.fMono + ';margin-top:7px',
+      'font-size:21px;color:' + (color || T.textHi) +
+      ';font-weight:900;font-family:Consolas,"Courier New",monospace;margin-top:6px',
       escapeHTML(String(value))));
 
     return box;
   }
 
+  function tableCell(text, options) {
+    options = options || {};
+
+    return mk('td',
+      'padding:9px 10px;border-bottom:1px solid ' + T.border +
+      ';font-size:' + (options.size || '12px') +
+      ';color:' + (options.color || T.mutedHi) +
+      ';font-weight:' + (options.weight || '600') +
+      ';font-family:' + (options.mono
+        ? 'Consolas,"Courier New",monospace'
+        : 'Arial,"Segoe UI",sans-serif') +
+      ';text-align:' + (options.align || 'center') +
+      ';white-space:nowrap',
+      escapeHTML(String(text)));
+
+  }
+
+  function tableHeader(text, align) {
+    return mk('th',
+      'padding:9px 10px;text-align:' + (align || 'center') +
+      ';font-size:10px;color:' + T.muted +
+      ';font-weight:800;text-transform:uppercase;letter-spacing:.5px;' +
+      'border-bottom:1px solid ' + T.border +
+      ';background:rgba(15,23,42,.8);white-space:nowrap',
+      escapeHTML(text));
+  }
+
   var totalRoutes = routes.length;
+
   var pendentes = Math.max(
     0,
     stats.total - stats.delivered - stats.failed - stats.foraDS
@@ -799,27 +827,24 @@
   var meta = 98.5;
   var metaOk = stats.dsPct >= meta;
 
-  /*
-   * 760px é mais legível no celular.
-   * A imagem ficará vertical conforme aumentarem as transportadoras.
-   */
   var card = mk('div',
-    'width:760px;margin:0 auto;' +
+    'width:1280px;margin:0 auto;' +
     'background:linear-gradient(180deg,' + T.bg + ' 0%,' + T.bgPurple + ' 100%);' +
-    'border-radius:20px;overflow:hidden;' +
+    'border-radius:18px;overflow:hidden;' +
     'box-shadow:0 25px 60px rgba(0,0,0,.55);' +
-    'font-family:' + T.fUI + ';color:' + T.text);
+    'font-family:Arial,"Segoe UI",sans-serif;color:' + T.text);
 
   card.dataset.mlmDashboardCard = '1';
 
   // ============================================================
   // HEADER
   // ============================================================
-  var header = mk('div',
-    'background:' + T.grad + ';padding:25px 28px;position:relative;overflow:hidden');
+  var dashHeader = mk('div',
+    'background:' + T.grad +
+    ';padding:20px 24px;position:relative;overflow:hidden');
 
-  header.appendChild(mk('div',
-    'position:absolute;right:-70px;top:-80px;width:260px;height:260px;' +
+  dashHeader.appendChild(mk('div',
+    'position:absolute;right:-70px;top:-90px;width:270px;height:270px;' +
     'border-radius:50%;background:rgba(255,255,255,.08)'));
 
   var headerTop = mk('div',
@@ -829,254 +854,335 @@
   var headerText = mk('div');
 
   headerText.appendChild(mk('div',
-    'font-size:27px;font-weight:950;color:#fff;letter-spacing:.3px',
-    '📦 MONITORAMENTO ' + escapeHTML(STATE.ssc)));
+    'font-size:27px;font-weight:900;color:#fff;letter-spacing:.3px',
+    'MONITORAMENTO ' + escapeHTML(STATE.ssc)));
 
   headerText.appendChild(mk('div',
-    'font-size:11px;color:rgba(255,255,255,.8);font-weight:800;' +
-    'letter-spacing:1.8px;text-transform:uppercase;margin-top:5px',
-    'Resumo operacional · Performance final'));
+    'font-size:11px;color:rgba(255,255,255,.82);font-weight:800;' +
+    'letter-spacing:1.6px;text-transform:uppercase;margin-top:5px',
+    'Resumo operacional | Performance final'));
 
   var modeBadge = mk('div',
-    'min-width:90px;background:rgba(255,255,255,.17);' +
-    'border:1.5px solid rgba(255,255,255,.48);border-radius:13px;' +
-    'padding:9px 14px;text-align:center');
+    'min-width:105px;background:rgba(255,255,255,.17);' +
+    'border:1px solid rgba(255,255,255,.48);border-radius:11px;' +
+    'padding:8px 14px;text-align:center');
 
   modeBadge.appendChild(mk('div',
-    'font-size:9px;color:rgba(255,255,255,.72);font-weight:800;letter-spacing:1.5px',
+    'font-size:9px;color:rgba(255,255,255,.72);font-weight:800;letter-spacing:1.4px',
     'MODO'));
 
   modeBadge.appendChild(mk('div',
-    'font-size:18px;color:#fff;font-weight:950;margin-top:2px',
+    'font-size:17px;color:#fff;font-weight:900;margin-top:2px',
     modeLabel === 'geral' ? 'GERAL' : 'SVC'));
 
   headerTop.appendChild(headerText);
   headerTop.appendChild(modeBadge);
-  header.appendChild(headerTop);
+  dashHeader.appendChild(headerTop);
 
   var now = new Date();
-  var d0 = new Date(STATE.date + 'T12:00:00');
+  var selectedDate = new Date(STATE.date + 'T12:00:00');
 
-  header.appendChild(mk('div',
-    'position:relative;z-index:1;margin-top:13px;font-size:11px;' +
-    'color:rgba(255,255,255,.82);font-family:' + T.fMono,
-    '📅 ' + pad(d0.getDate()) + '/' + pad(d0.getMonth() + 1) + '/' +
-    d0.getFullYear() + '  ·  🕐 ' + pad(now.getHours()) + ':' +
-    pad(now.getMinutes())));
+  dashHeader.appendChild(mk('div',
+    'position:relative;z-index:1;margin-top:11px;font-size:11px;' +
+    'color:rgba(255,255,255,.84);font-family:Consolas,"Courier New",monospace',
+    pad(selectedDate.getDate()) + '/' +
+    pad(selectedDate.getMonth() + 1) + '/' +
+    selectedDate.getFullYear() + ' | ' +
+    pad(now.getHours()) + ':' + pad(now.getMinutes())));
 
-  card.appendChild(header);
+  card.appendChild(dashHeader);
 
   // ============================================================
-  // DS PRINCIPAL
+  // CORPO HORIZONTAL
   // ============================================================
-  var dsSection = mk('div',
-    'padding:24px 26px 18px;border-bottom:1px solid ' + T.border);
+  var body = mk('div',
+    'display:grid;grid-template-columns:315px 1fr;align-items:stretch');
 
-  var dsRow = mk('div',
-    'display:flex;align-items:center;justify-content:space-between;gap:18px');
+  // ============================================================
+  // COLUNA ESQUERDA
+  // ============================================================
+  var summary = mk('div',
+    'padding:20px;border-right:1px solid ' + T.border +
+    ';background:rgba(15,23,42,.25)');
 
-  var dsLeft = mk('div');
-
-  dsLeft.appendChild(mk('div',
-    'font-size:44px;line-height:1;font-weight:950;color:' + mainColor +
-    ';font-family:' + T.fMono,
-    stats.dsPct.toFixed(2) + '%'));
-
-  dsLeft.appendChild(mk('div',
-    'font-size:11px;color:' + T.muted + ';font-weight:800;' +
-    'letter-spacing:1.6px;margin-top:7px',
+  summary.appendChild(mk('div',
+    'font-size:11px;color:' + T.muted +
+    ';font-weight:800;letter-spacing:1.5px',
     'DS OPERACIONAL'));
 
-  var metaTag = mk('div',
-    'padding:10px 16px;border-radius:12px;font-size:12px;font-weight:850;' +
-    'background:' + (metaOk
-      ? 'rgba(16,185,129,.14)'
-      : 'rgba(245,158,11,.14)') +
+  summary.appendChild(mk('div',
+    'font-size:48px;line-height:1;font-weight:950;color:' + mainColor +
+    ';font-family:Consolas,"Courier New",monospace;margin-top:8px',
+    stats.dsPct.toFixed(2) + '%'));
+
+  summary.appendChild(mk('div',
+    'display:inline-block;margin-top:12px;padding:8px 12px;border-radius:9px;' +
+    'font-size:11px;font-weight:850;background:' +
+    (metaOk ? 'rgba(16,185,129,.14)' : 'rgba(245,158,11,.14)') +
     ';color:' + (metaOk ? T.ok : T.warn) +
     ';border:1px solid ' + (metaOk ? T.ok : T.warn),
-    (metaOk ? '✅' : '⚠️') + ' Meta ' +
-    meta.toFixed(1).replace('.', ',') + '%');
+    (metaOk ? 'META ATINGIDA | ' : 'ABAIXO DA META | ') +
+    meta.toFixed(1).replace('.', ',') + '%'));
 
-  dsRow.appendChild(dsLeft);
-  dsRow.appendChild(metaTag);
-  dsSection.appendChild(dsRow);
+  var summaryMetrics = mk('div',
+    'display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:18px');
 
-  var metrics = mk('div',
-    'display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:20px');
+  summaryMetrics.appendChild(metric('Rotas', fmt(totalRoutes), T.brand2));
+  summaryMetrics.appendChild(metric('SPR', fmt(sprGeral), T.info));
+  summaryMetrics.appendChild(metric('Pacotes', fmt(stats.total), T.textHi));
+  summaryMetrics.appendChild(metric('Entregues', fmt(stats.delivered), T.ok));
+  summaryMetrics.appendChild(metric('Pendentes', fmt(pendentes), T.warn));
+  summaryMetrics.appendChild(metric('Insucessos', fmt(stats.failed), T.err));
 
-  metrics.appendChild(metric('Rotas', fmt(totalRoutes), T.brand2));
-  metrics.appendChild(metric('SPR', fmt(sprGeral), T.info));
-  metrics.appendChild(metric('Total pacotes', fmt(stats.total), T.textHi));
-  metrics.appendChild(metric('Entregues', fmt(stats.delivered), T.ok));
-  metrics.appendChild(metric('Pendentes', fmt(pendentes), T.warn));
-  metrics.appendChild(metric('Insucessos', fmt(stats.failed), T.err));
+  summary.appendChild(summaryMetrics);
 
-  dsSection.appendChild(metrics);
+  var extraStats = mk('div',
+    'margin-top:10px;display:flex;flex-direction:column;gap:7px');
 
-  var rateLine = mk('div',
-    'display:flex;gap:10px;margin-top:10px');
-
-  rateLine.appendChild(metric(
-    '% Insucesso',
-    pctInsucesso.toFixed(2) + '%',
-    T.err
-  ));
+  extraStats.appendChild(mk('div',
+    'background:rgba(239,68,68,.10);border:1px solid rgba(239,68,68,.3);' +
+    'border-radius:8px;padding:8px 10px;color:' + T.err +
+    ';font-size:11px;font-weight:800',
+    'INSUCESSO: ' + pctInsucesso.toFixed(2) + '%'));
 
   if (stats.naoAgencia > 0) {
-    rateLine.appendChild(metric(
-      'Coletas',
-      fmt(stats.naoAgencia),
-      T.mutedHi
-    ));
+    extraStats.appendChild(mk('div',
+      'background:rgba(148,163,184,.09);border:1px solid ' + T.border +
+      ';border-radius:8px;padding:8px 10px;color:' + T.mutedHi +
+      ';font-size:11px;font-weight:750',
+      'COLETAS: ' + fmt(stats.naoAgencia)));
   }
 
   if (stats.transferidos > 0) {
-    rateLine.appendChild(metric(
-      'Transferidos',
-      fmt(stats.transferidos),
-      T.mutedHi
-    ));
+    extraStats.appendChild(mk('div',
+      'background:rgba(148,163,184,.09);border:1px solid ' + T.border +
+      ';border-radius:8px;padding:8px 10px;color:' + T.mutedHi +
+      ';font-size:11px;font-weight:750',
+      'TRANSFERIDOS: ' + fmt(stats.transferidos)));
   }
 
-  dsSection.appendChild(rateLine);
-  card.appendChild(dsSection);
+  summary.appendChild(extraStats);
+  body.appendChild(summary);
 
   // ============================================================
-  // TRANSPORTADORAS EM CARDS
+  // COLUNA DIREITA
   // ============================================================
-  var carriersSection = mk('div',
-    'padding:22px 26px;border-bottom:1px solid ' + T.border);
+  var right = mk('div', 'padding:18px 20px');
 
-  carriersSection.appendChild(mk('div',
-    'font-size:17px;font-weight:900;color:' + T.textHi + ';margin-bottom:14px',
-    '🏢 Performance por Transportadora'));
+  // TRANSPORTADORAS
+  right.appendChild(mk('div',
+    'font-size:16px;font-weight:900;color:' + T.textHi + ';margin-bottom:10px',
+    'PERFORMANCE POR TRANSPORTADORA'));
 
-  var carrierList = mk('div',
-    'display:flex;flex-direction:column;gap:10px');
+  var carrierTable = mk('table',
+    'width:100%;border-collapse:separate;border-spacing:0;' +
+    'background:rgba(15,23,42,.54);border:1px solid ' + T.border +
+    ';border-radius:10px;overflow:hidden;table-layout:auto');
+
+  var carrierHead = mk('thead');
+  var carrierHeadRow = mk('tr');
+
+  [
+    ['#', 'center'],
+    ['Transportadora', 'left'],
+    ['Rotas', 'center'],
+    ['Pacotes', 'center'],
+    ['Entregues', 'center'],
+    ['Falhas', 'center'],
+    ['Pend.', 'center'],
+    ['Sacas', 'center'],
+    ['SPR', 'center'],
+    ['DS', 'center']
+  ].forEach(function (item) {
+    carrierHeadRow.appendChild(tableHeader(item[0], item[1]));
+  });
+
+  carrierHead.appendChild(carrierHeadRow);
+  carrierTable.appendChild(carrierHead);
+
+  var carrierBody = mk('tbody');
 
   carriers.forEach(function (c, index) {
-    var color = dsColor(c.dsPct);
+    var row = mk('tr',
+      'background:' + (index % 2 === 0
+        ? 'rgba(30,41,59,.22)'
+        : 'rgba(15,23,42,.18)'));
 
-    var carrierCard = mk('div',
-      'background:rgba(15,23,42,.65);border:1px solid ' + T.border +
-      ';border-left:4px solid ' + color +
-      ';border-radius:13px;padding:13px 15px');
+    row.appendChild(tableCell(index + 1, {
+      mono: true,
+      color: T.muted,
+      weight: '700'
+    }));
 
-    var top = mk('div',
-      'display:flex;align-items:center;justify-content:space-between;gap:14px');
+    row.appendChild(tableCell(c.name, {
+      align: 'left',
+      color: T.textHi,
+      weight: '800'
+    }));
 
-    top.appendChild(mk('div',
-      'font-size:14px;font-weight:850;color:' + T.textHi,
-      (index + 1) + '. ' + escapeHTML(c.name)));
+    row.appendChild(tableCell(fmt(c.routes), {
+      mono: true
+    }));
 
-    top.appendChild(mk('div',
-      'font-size:17px;font-weight:950;color:' + color +
-      ';font-family:' + T.fMono,
-      c.dsPct.toFixed(2) + '%'));
+    row.appendChild(tableCell(fmt(c.total), {
+      mono: true,
+      color: T.textHi
+    }));
 
-    carrierCard.appendChild(top);
+    row.appendChild(tableCell(fmt(c.delivered), {
+      mono: true,
+      color: T.ok
+    }));
 
-    var row = mk('div',
-      'display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:11px');
+    row.appendChild(tableCell(fmt(c.failed), {
+      mono: true,
+      color: c.failed > 0 ? T.err : T.muted
+    }));
 
-    function carrierValue(label, value, colorValue) {
-      var el = mk('div',
-        'background:rgba(30,41,59,.55);border-radius:8px;padding:8px');
+    row.appendChild(tableCell(fmt(c.pending), {
+      mono: true,
+      color: c.pending > 0 ? T.warn : T.muted
+    }));
 
-      el.appendChild(mk('div',
-        'font-size:8px;color:' + T.muted + ';font-weight:750;' +
-        'text-transform:uppercase;letter-spacing:.5px',
-        escapeHTML(label)));
+    row.appendChild(tableCell(fmt(c.bags), {
+      mono: true
+    }));
 
-      el.appendChild(mk('div',
-        'font-size:13px;color:' + (colorValue || T.mutedHi) +
-        ';font-weight:850;font-family:' + T.fMono + ';margin-top:4px',
-        escapeHTML(String(value))));
+    row.appendChild(tableCell(fmt(c.spr), {
+      mono: true
+    }));
 
-      return el;
-    }
+    row.appendChild(tableCell(c.dsPct.toFixed(2) + '%', {
+      mono: true,
+      color: dsColor(c.dsPct),
+      weight: '900'
+    }));
 
-    row.appendChild(carrierValue('Rotas', fmt(c.routes)));
-    row.appendChild(carrierValue('Pacotes', fmt(c.total)));
-    row.appendChild(carrierValue('Entregues', fmt(c.delivered), T.ok));
-    row.appendChild(carrierValue('Falhas', fmt(c.failed), c.failed > 0 ? T.err : T.muted));
-    row.appendChild(carrierValue('Sacas', fmt(c.bags)));
-    row.appendChild(carrierValue('SPR', fmt(c.spr)));
-    row.appendChild(carrierValue('Pendentes', fmt(c.pending), c.pending > 0 ? T.warn : T.muted));
-
-    carrierCard.appendChild(row);
-    carrierList.appendChild(carrierCard);
+    carrierBody.appendChild(row);
   });
 
-  carriersSection.appendChild(carrierList);
-  card.appendChild(carriersSection);
+  carrierTable.appendChild(carrierBody);
+  right.appendChild(carrierTable);
 
-  // ============================================================
   // CICLOS
-  // ============================================================
-  var cycleSection = mk('div', 'padding:22px 26px');
+  right.appendChild(mk('div',
+    'font-size:16px;font-weight:900;color:' + T.textHi +
+    ';margin:17px 0 10px',
+    'RELATORIO POR CICLO'));
 
-  cycleSection.appendChild(mk('div',
-    'font-size:17px;font-weight:900;color:' + T.textHi + ';margin-bottom:14px',
-    '🔄 Relatório por Ciclo'));
+  var cycleTable = mk('table',
+    'width:100%;border-collapse:separate;border-spacing:0;' +
+    'background:rgba(15,23,42,.54);border:1px solid ' + T.border +
+    ';border-radius:10px;overflow:hidden');
 
-  var cycleGrid = mk('div',
-    'display:grid;grid-template-columns:repeat(2,1fr);gap:11px');
+  var cycleHead = mk('thead');
+  var cycleHeadRow = mk('tr');
 
-  ciclos.forEach(function (c) {
-    var color = dsColor(c.dsPct);
-
-    var cycle = mk('div',
-      'background:rgba(15,23,42,.65);border:1px solid ' + T.border +
-      ';border-top:3px solid ' + color +
-      ';border-radius:13px;padding:14px');
-
-    var cycleTop = mk('div',
-      'display:flex;justify-content:space-between;align-items:center');
-
-    cycleTop.appendChild(mk('div',
-      'font-size:16px;color:' + T.textHi + ';font-weight:900',
-      escapeHTML(c.ciclo)));
-
-    cycleTop.appendChild(mk('div',
-      'font-size:16px;color:' + color + ';font-weight:950;font-family:' + T.fMono,
-      c.dsPct.toFixed(2) + '%'));
-
-    cycle.appendChild(cycleTop);
-
-    cycle.appendChild(mk('div',
-      'font-size:11px;color:' + T.mutedHi + ';font-family:' + T.fMono +
-      ';line-height:1.8;margin-top:9px',
-      '📦 ' + fmt(c.total) +
-      ' &nbsp; ✅ ' + fmt(c.delivered) +
-      ' &nbsp; 🔴 ' + fmt(c.failed) + '<br>' +
-      '🛣️ ' + fmt(c.routes) +
-      ' rotas &nbsp; ⏳ ' + fmt(c.pending) +
-      ' &nbsp; Sacas ' + fmt(c.bags)));
-
-    cycleGrid.appendChild(cycle);
+  [
+    ['Ciclo', 'left'],
+    ['Rotas', 'center'],
+    ['Pacotes', 'center'],
+    ['Entregues', 'center'],
+    ['Falhas', 'center'],
+    ['Pendentes', 'center'],
+    ['Sacas', 'center'],
+    ['DS', 'center']
+  ].forEach(function (item) {
+    cycleHeadRow.appendChild(tableHeader(item[0], item[1]));
   });
 
-  cycleSection.appendChild(cycleGrid);
-  card.appendChild(cycleSection);
+  cycleHead.appendChild(cycleHeadRow);
+  cycleTable.appendChild(cycleHead);
+
+  var cycleBody = mk('tbody');
+
+  ciclos.forEach(function (c, index) {
+    var row = mk('tr',
+      'background:' + (index % 2 === 0
+        ? 'rgba(30,41,59,.22)'
+        : 'rgba(15,23,42,.18)'));
+
+    row.appendChild(tableCell(c.ciclo, {
+      align: 'left',
+      color: T.textHi,
+      weight: '900'
+    }));
+
+    row.appendChild(tableCell(fmt(c.routes), {
+      mono: true
+    }));
+
+    row.appendChild(tableCell(fmt(c.total), {
+      mono: true,
+      color: T.textHi
+    }));
+
+    row.appendChild(tableCell(fmt(c.delivered), {
+      mono: true,
+      color: T.ok
+    }));
+
+    row.appendChild(tableCell(fmt(c.failed), {
+      mono: true,
+      color: c.failed > 0 ? T.err : T.muted
+    }));
+
+    row.appendChild(tableCell(fmt(c.pending), {
+      mono: true,
+      color: c.pending > 0 ? T.warn : T.muted
+    }));
+
+    row.appendChild(tableCell(fmt(c.bags), {
+      mono: true
+    }));
+
+    row.appendChild(tableCell(c.dsPct.toFixed(2) + '%', {
+      mono: true,
+      color: dsColor(c.dsPct),
+      weight: '900'
+    }));
+
+    cycleBody.appendChild(row);
+  });
+
+  cycleTable.appendChild(cycleBody);
+  right.appendChild(cycleTable);
+
+  // ORIGENS
+  if (breakdown && breakdown.length > 0) {
+    var origins = breakdown.map(function (item) {
+      return item.origem + ': ' + fmt(item.count);
+    }).join(' | ');
+
+    right.appendChild(mk('div',
+      'margin-top:12px;background:rgba(124,58,237,.08);' +
+      'border:1px solid ' + T.border +
+      ';border-radius:8px;padding:8px 10px;font-size:10px;' +
+      'color:' + T.mutedHi + ';font-family:Consolas,"Courier New",monospace',
+      'ORIGENS | ' + escapeHTML(origins)));
+  }
+
+  body.appendChild(right);
+  card.appendChild(body);
 
   // ============================================================
   // FOOTER
   // ============================================================
-  var footer = mk('div',
-    'padding:13px 26px;background:rgba(15,23,42,.65);' +
+  var dashFooter = mk('div',
+    'padding:11px 20px;background:rgba(15,23,42,.72);' +
     'border-top:1px solid ' + T.border +
     ';display:flex;justify-content:space-between;align-items:center');
 
-  footer.appendChild(mk('div',
+  dashFooter.appendChild(mk('div',
     'font-size:10px;color:' + T.muted,
-    '🚚 Monitor Last Mile v' + APP.version));
+    'Monitor Last Mile v' + APP.version));
 
-  footer.appendChild(mk('div',
-    'font-size:10px;color:' + T.muted + ';font-family:' + T.fMono,
-    'Mercado Livre · ' + escapeHTML(STATE.ssc)));
+  dashFooter.appendChild(mk('div',
+    'font-size:10px;color:' + T.muted +
+    ';font-family:Consolas,"Courier New",monospace',
+    'Mercado Livre | ' + escapeHTML(STATE.ssc)));
 
-  card.appendChild(footer);
+  card.appendChild(dashFooter);
 
   return card;
 }
@@ -3573,7 +3679,7 @@
             'font-size:12px;color:' + T.ok + ';margin-bottom:8px;font-weight:600',
             '✓ ' + count + ' motoristas detectados. Preview:'));
           var prevTbl = mk('table',
-            'width:100%;border-collapse:collapse;font-size:11px;' +
+            'width:100%;border-collapse:separate;border-spacing:0;font-size:13px;' +
             'background:' + T.surface + ';border-radius:8px;overflow:hidden');
           var thr = mk('tr', 'background:rgba(15,23,42,.6);color:' + T.muted);
           ['Nome', 'Placa', 'Telefone', 'Hub'].forEach(function (h) {
@@ -3634,55 +3740,134 @@
   }
   // Converte um elemento em imagem via SVG+foreignObject (100% nativo, sem CDN, imune a CSP)
   function elementToSvgDataUrl(el) {
-    var w = Math.ceil(el.scrollWidth || el.offsetWidth);
-    var h = Math.ceil(el.scrollHeight || el.offsetHeight);
-    var htmlContent = el.outerHTML;
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">' +
-      '<foreignObject width="100%" height="100%">' +
-      '<div xmlns="http://www.w3.org/1999/xhtml" style="width:' + w + 'px;height:' + h + 'px">' +
-      htmlContent +
-      '</div></foreignObject></svg>';
-    return {
-      url: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
-      width: w, height: h
-    };
+  if (!el) {
+    throw new Error('Elemento não encontrado');
   }
 
-  // Converte um elemento HTML em imagem PNG e baixa — sem depender de bibliotecas externas
-  function downloadElementAsImage(targetEl, filename) {
-    if (!targetEl) { toast('Nada para exportar', 'warn'); return; }
-    toast('Gerando imagem...', 'info');
-    try {
-      var svgData = elementToSvgDataUrl(targetEl);
-      var img = new Image();
-      img.onload = function () {
-        try {
-          var scale = 3; // maior resolução
-          var canvas = document.createElement('canvas');
-          canvas.width = svgData.width * scale;
-          canvas.height = svgData.height * scale;
-          var ctx = canvas.getContext('2d');
-          ctx.fillStyle = T.bg;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.scale(scale, scale);
-          ctx.drawImage(img, 0, 0, svgData.width, svgData.height);
-          canvas.toBlob(function (blob) {
-            if (!blob) { toast('Falha ao gerar imagem (blob nulo)', 'err'); return; }
-            downloadBlob(blob, filename);
-            toast('Imagem baixada! 📷', 'ok');
-          }, 'image/png');
-        } catch (errInner) {
-          toast('Erro ao desenhar imagem: ' + errInner.message, 'err');
-        }
-      };
-      img.onerror = function () {
-        toast('Erro ao carregar conteúdo da imagem', 'err');
-      };
-      img.src = svgData.url;
-    } catch (err) {
-      toast('Erro ao gerar imagem: ' + err.message, 'err');
-    }
+  var width = Math.ceil(
+    el.offsetWidth || el.getBoundingClientRect().width
+  );
+
+  var height = Math.ceil(
+    el.offsetHeight || el.getBoundingClientRect().height
+  );
+
+  if (!width || !height) {
+    throw new Error('Elemento sem dimensões válidas');
   }
+
+  var cloned = el.cloneNode(true);
+
+  cloned.style.width = width + 'px';
+  cloned.style.height = height + 'px';
+  cloned.style.margin = '0';
+  cloned.style.transform = 'none';
+  cloned.style.maxWidth = 'none';
+
+  var serializer = new XMLSerializer();
+  var htmlContent = serializer.serializeToString(cloned);
+
+  var svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" ' +
+    'xmlns:xlink="http://www.w3.org/1999/xlink" ' +
+    'width="' + width + '" height="' + height + '" ' +
+    'viewBox="0 0 ' + width + ' ' + height + '">' +
+      '<foreignObject x="0" y="0" width="' + width + '" height="' + height + '">' +
+        '<div xmlns="http://www.w3.org/1999/xhtml" ' +
+        'style="width:' + width + 'px;height:' + height +
+        'px;margin:0;padding:0;overflow:hidden;">' +
+          htmlContent +
+        '</div>' +
+      '</foreignObject>' +
+    '</svg>';
+
+  var blob = new Blob([svg], {
+    type: 'image/svg+xml;charset=utf-8'
+  });
+
+  return {
+    url: URL.createObjectURL(blob),
+    width: width,
+    height: height
+  };
+}
+
+function downloadElementAsImage(targetEl, filename) {
+  if (!targetEl) {
+    toast('Nada para exportar', 'warn');
+    return;
+  }
+
+  toast('Gerando imagem...', 'info');
+
+  var svgData;
+
+  try {
+    svgData = elementToSvgDataUrl(targetEl);
+  } catch (err) {
+    console.error('[MLM] Erro ao preparar imagem:', err);
+    toast('Erro ao preparar imagem: ' + err.message, 'err');
+    return;
+  }
+
+  var img = new Image();
+
+  img.onload = function () {
+    try {
+      var scale = 2;
+      var canvas = document.createElement('canvas');
+
+      canvas.width = Math.round(svgData.width * scale);
+      canvas.height = Math.round(svgData.height * scale);
+
+      var ctx = canvas.getContext('2d');
+
+      if (!ctx) {
+        throw new Error('Canvas indisponível');
+      }
+
+      ctx.fillStyle = T.bg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.drawImage(
+        img,
+        0,
+        0,
+        svgData.width,
+        svgData.height
+      );
+
+      canvas.toBlob(function (blob) {
+        URL.revokeObjectURL(svgData.url);
+
+        if (!blob) {
+          toast('Falha ao gerar o arquivo PNG', 'err');
+          return;
+        }
+
+        downloadBlob(blob, filename);
+        toast('Imagem baixada!', 'ok');
+      }, 'image/png', 1);
+
+    } catch (err) {
+      URL.revokeObjectURL(svgData.url);
+      console.error('[MLM] Erro ao desenhar imagem:', err);
+      toast('Erro ao desenhar imagem: ' + err.message, 'err');
+    }
+  };
+
+  img.onerror = function (event) {
+    URL.revokeObjectURL(svgData.url);
+    console.error('[MLM] Erro ao carregar SVG:', event);
+    toast('Erro ao carregar o conteúdo da imagem', 'err');
+  };
+
+  img.src = svgData.url;
+}
   function safeName(s) {
     return String(s || 'export').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').slice(0, 80);
   }
