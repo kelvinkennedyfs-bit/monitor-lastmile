@@ -68,6 +68,47 @@
   function fmt(n) { if (n == null || isNaN(n)) return '0'; return Number(n).toLocaleString('pt-BR'); }
   function pad(n, len) { var s = String(n); while (s.length < (len || 2)) s = '0' + s; return s; }
   function pct(num, den) { if (!den || den <= 0) return '—'; return ((num / den) * 100).toFixed(1) + '%'; }
+  // ============================================================
+  // HELPERS DE TEMPO (ORH)
+  // ============================================================
+  // Converte ms em string "HH:MM h"
+  function msToHHMM(ms) {
+    if (!ms || ms < 0) return '—';
+    var totalMin = Math.floor(ms / 60000);
+    var h = Math.floor(totalMin / 60);
+    var m = totalMin % 60;
+    return pad(h) + ':' + pad(m) + ' h';
+  }
+  // Calcula ORH de uma rota: do initDate até finalDate (ou agora se ainda aberta)
+  function calcORH(r) {
+    if (!r.initDate) return 0;
+    var end = r.finalDate ? r.finalDate : Date.now();
+    var ms = end - r.initDate;
+    return ms > 0 ? ms : 0;
+  }
+  // Calcula tempo desde a última baixa (entrega ou insucesso)
+  // Usa lastActivityAt se disponível, senão estima pelo progresso da rota
+  function calcInativo(r) {
+    if (r.status === 'Encerradas') return 0;
+    var lastAct = r.lastActivityAt || r._lastActivityAt;
+    if (lastAct) return Date.now() - lastAct;
+    // Fallback: não temos timestamp exato — retorna null pra indicar "sem dado"
+    return null;
+  }
+  // Cor baseada no tempo inativo (null = sem dado, <40min ok, 40-60min warn, >60min err)
+  function inativoColor(ms) {
+    if (ms === null) return T.muted;
+    var min = ms / 60000;
+    if (min < 40) return T.ok;
+    if (min < 60) return T.warn;
+    return T.err;
+  }
+  // Cor baseada no ORH (>=12h = ok/meta, <12h e rota encerrada = warn, rota aberta = info)
+  function orhColor(ms, status) {
+    var h = ms / 3600000;
+    if (status === 'Encerradas') return h >= 12 ? T.ok : T.warn;
+    return T.info; // ainda em andamento
+  }
   function escapeHTML(s) {
     if (s == null) return '';
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -209,9 +250,8 @@
       INSUCESSOS:  { motivo: new Set(), carrier: new Set() },
       MOTORISTAS:  { carrier: new Set() },
       DOBRANDO:    { carrier: new Set() },
-      PNR:         { carrier: new Set() },
-      AGENCIAS:    { sort: 'all' },
-      DEVOLUCOES:  { sort: 'all' }
+      ORH:         { carrier: new Set(), status: 'all', alerta: 'all' },
+      AGENCIAS:    { sort: 'all' }
     },
     expanded: {},
     refreshMs: 900000, refreshPaused: true, nextRefreshAt: 0,  // 15 minutos
@@ -1268,9 +1308,8 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     { id: 'INSUCESSOS', label: 'Insucessos' },
     { id: 'MOTORISTAS', label: 'Motoristas' },
     { id: 'DOBRANDO',   label: 'Dobrando 🔄' },
-    { id: 'PNR',        label: 'PNR' },
-    { id: 'AGENCIAS',   label: 'Agências' },
-    { id: 'DEVOLUCOES', label: 'Devoluções' }
+    { id: 'ORH',        label: 'ORH ⏱' },
+    { id: 'AGENCIAS',   label: 'Agências' }
   ];
   var tabsBar = mk('div',
     'display:flex;gap:6px;padding:12px 18px 0 18px;background:rgba(15,23,42,.2);' +
@@ -1379,9 +1418,8 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
         case 'INSUCESSOS': renderInsucessos(); break;
         case 'MOTORISTAS': renderMotoristas(); break;
         case 'DOBRANDO':   renderDobrando();   break;
-        case 'PNR':        renderPNR();        break;
+        case 'ORH':        renderORH();        break;
         case 'AGENCIAS':   renderAgencias();   break;
-        case 'DEVOLUCOES': renderDevolucoes(); break;
         default:           renderRotas();
       }
     } catch (err) {
@@ -2817,7 +2855,400 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     dataArea.appendChild(grid);
     setFooterCount(filtered.length, pkgs.length);
   }
+  // ==========================================================================
+  // RENDER ORH — Tempo em rota e monitoramento de inatividade
+  // ==========================================================================
+  function renderORH() {
+    var now = Date.now();
+    // Exclui "A caminho do destino" conforme solicitado
+    var routes = applyGlobalFilters(STATE.routes || []).filter(function (r) {
+      return r.status !== 'A caminho do destino' && r.initDate;
+    });
 
+    var f = STATE.filters.ORH;
+
+    // Filtra por carrier
+    var carriers = [];
+    routes.forEach(function (r) {
+      if (r.carrier && carriers.indexOf(r.carrier) < 0) carriers.push(r.carrier);
+    });
+    carriers.sort();
+
+    // Aplica filtros locais
+    var filtered = routes.filter(function (r) {
+      if (f.carrier.size > 0 && !f.carrier.has(r.carrier)) return false;
+      if (f.status !== 'all') {
+        if (f.status === 'abertas'    && r.status !== 'Abertas')    return false;
+        if (f.status === 'encerradas' && r.status !== 'Encerradas') return false;
+      }
+      if (f.alerta !== 'all') {
+        var orhMs = Math.max(0, (r.finalDate || now) - r.initDate);
+        var min = orhMs / 60000;
+        var horas = orhMs / 3600000;
+        if (f.alerta === 'meta'    && horas < 12)  return false;
+        if (f.alerta === 'critico' && min < 60)    return false;
+      }
+      return true;
+    });
+
+    // Calcula ORH de cada rota e agrupa por driver
+    var byDriver = {};
+    filtered.forEach(function (r) {
+      var key = r.driver || '— Sem motorista —';
+      var orhMs = Math.max(0, (r.finalDate || now) - r.initDate);
+      if (!byDriver[key]) {
+        byDriver[key] = {
+          driver: key,
+          carrier: r.carrier || '',
+          rotas: [],
+          totalORHms: 0,
+          maxORHms: 0,
+          totalPkg: 0,
+          delivered: 0,
+          failed: 0,
+          pnr: 0,
+          placa: '',
+          tel: ''
+        };
+      }
+      var d = byDriver[key];
+      d.rotas.push({ r: r, orhMs: orhMs });
+      d.totalORHms += orhMs;
+      if (orhMs > d.maxORHms) d.maxORHms = orhMs;
+      d.totalPkg  += r.totalPkg  || 0;
+      d.delivered += r.delivered || 0;
+      d.failed    += r.failed    || 0;
+      d.pnr       += r.pnr       || 0;
+      if (!d.carrier && r.carrier) d.carrier = r.carrier;
+
+      // Puxa placa e tel da agenda
+      var ag = Agenda.lookup(r.driver);
+      if (ag && !d.placa) { d.placa = ag.placa || ''; d.tel = ag.tel || ''; }
+    });
+
+    var drivers = Object.keys(byDriver).map(function (k) { return byDriver[k]; });
+
+    // Ordena: drivers em rota há mais tempo no topo
+    drivers.sort(function (a, b) { return b.maxORHms - a.maxORHms; });
+
+    // ---- ESTATÍSTICAS GERAIS ----
+    var totalDrivers = drivers.length;
+    var metaDrivers  = drivers.filter(function (d) { return d.maxORHms >= 12 * 3600000; }).length;
+    var alertaDrivers = filtered.filter(function (r) {
+      // Rota aberta com ORH > 12h (possível horas extra não planejadas)
+      var orhMs = Math.max(0, (r.finalDate || now) - r.initDate);
+      return r.status === 'Abertas' && orhMs > 12 * 3600000;
+    }).length;
+    // Inativos: rotas Abertas com ORH > 40min sem nova baixa (estimado)
+    // Como não temos lastActivityAt da API, usamos a razão entregues/total como proxy:
+    // se progresso está parado (delivered = 0 e orhMs > 40min) → inativo
+    var inativosAlerta = filtered.filter(function (r) {
+      if (r.status !== 'Abertas') return false;
+      var orhMs = Math.max(0, now - r.initDate);
+      if (orhMs < 40 * 60000) return false; // menos de 40min → ok
+      // Heurística: rota aberta + sem nenhuma entrega + tempo > 40min
+      if ((r.delivered || 0) === 0 && (r.totalPkg || 0) > 0) return true;
+      return false;
+    }).length;
+
+    // ---- HEADER ----
+    dataArea.appendChild(mk('div',
+      'font-size:13px;font-weight:600;color:' + T.textHi + ';margin-bottom:12px',
+      'ORH — Tempo em Rota ' +
+      '<span style="color:' + T.muted + ';font-size:11px">(' + filtered.length + ' rotas · ' +
+      totalDrivers + ' drivers)</span>'));
+
+    // ---- KPI MINI BAR ----
+    var kpiBar = mk('div',
+      'display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px');
+    function orhKpi(label, val, color, sub) {
+      var c = mk('div',
+        'background:' + T.surface + ';border:1px solid ' + T.border +
+        ';border-left:3px solid ' + color + ';border-radius:8px;padding:10px 12px');
+      c.appendChild(mk('div',
+        'font-size:9px;color:' + T.muted + ';font-weight:600;text-transform:uppercase;margin-bottom:4px',
+        escapeHTML(label)));
+      c.appendChild(mk('div',
+        'font-size:18px;font-weight:700;color:' + color + ';font-family:' + T.fMono, String(val)));
+      if (sub) c.appendChild(mk('div',
+        'font-size:10px;color:' + T.muted + ';margin-top:3px', escapeHTML(sub)));
+      return c;
+    }
+    kpiBar.appendChild(orhKpi('Drivers monit.', totalDrivers, T.brand2, 'em ' + filtered.length + ' rotas'));
+    kpiBar.appendChild(orhKpi('Meta ≥ 12h', metaDrivers,
+      metaDrivers > 0 ? T.ok : T.muted,
+      metaDrivers > 0 ? 'atingiram o target' : 'nenhum ainda'));
+    kpiBar.appendChild(orhKpi('Possível hora extra', alertaDrivers,
+      alertaDrivers > 0 ? T.warn : T.muted,
+      alertaDrivers > 0 ? 'rotas abertas >12h' : 'tudo ok'));
+    kpiBar.appendChild(orhKpi('Inativos (>40min)', inativosAlerta,
+      inativosAlerta > 0 ? T.err : T.ok,
+      inativosAlerta > 0 ? 'sem entrega registrada' : 'todos ativos'));
+    dataArea.appendChild(kpiBar);
+
+    // ---- FILTROS LOCAIS ----
+    if (carriers.length > 0) dataArea.appendChild(chipFilter({
+      label: 'Carrier', values: carriers, selectedSet: f.carrier,
+      onChange: function () { renderActiveTab(); }
+    }));
+
+    // Segmented: status + alerta
+    var segWrap = mk('div', 'display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap');
+    function segBtn(label, key, val) {
+      var active = f[key] === val;
+      var btn = mk('button',
+        'background:' + (active ? T.gradSoft : T.surface) +
+        ';border:1px solid ' + (active ? T.brand : T.border) +
+        ';color:' + (active ? T.textHi : T.mutedHi) +
+        ';padding:5px 12px;border-radius:14px;cursor:pointer;font-size:11px;font-weight:500',
+        escapeHTML(label));
+      btn.onclick = function () { f[key] = val; renderActiveTab(); };
+      return btn;
+    }
+    var grpStatus = mk('div', 'display:flex;gap:4px;align-items:center');
+    grpStatus.appendChild(mk('span', 'font-size:9px;color:' + T.muted + ';font-weight:600;margin-right:2px', 'STATUS'));
+    grpStatus.appendChild(segBtn('Todos', 'status', 'all'));
+    grpStatus.appendChild(segBtn('Em rota', 'status', 'abertas'));
+    grpStatus.appendChild(segBtn('Encerradas', 'status', 'encerradas'));
+    var grpAlerta = mk('div', 'display:flex;gap:4px;align-items:center;margin-left:12px');
+    grpAlerta.appendChild(mk('span', 'font-size:9px;color:' + T.muted + ';font-weight:600;margin-right:2px', 'FILTRO'));
+    grpAlerta.appendChild(segBtn('Todos', 'alerta', 'all'));
+    grpAlerta.appendChild(segBtn('Meta ≥12h', 'alerta', 'meta'));
+    grpAlerta.appendChild(segBtn('Críticos >60min', 'alerta', 'critico'));
+    segWrap.appendChild(grpStatus);
+    segWrap.appendChild(grpAlerta);
+    dataArea.appendChild(segWrap);
+
+    // ---- EXPORT ----
+    dataArea.appendChild(exportBar('ORH',
+      function () {
+        var rows = [];
+        drivers.forEach(function (d) {
+          d.rotas.forEach(function (item) {
+            var r = item.r;
+            var orhMs = item.orhMs;
+            var orhH  = (orhMs / 3600000).toFixed(2);
+            var init  = r.initDate  ? new Date(r.initDate).toLocaleTimeString('pt-BR')  : '—';
+            var fim   = r.finalDate ? new Date(r.finalDate).toLocaleTimeString('pt-BR') : 'Em rota';
+            rows.push({
+              driver:    d.driver,
+              placa:     d.placa || '',
+              carrier:   d.carrier,
+              rota:      r.routeId,
+              cluster:   r.cluster || '',
+              status:    r.status,
+              inicio:    init,
+              fim:       fim,
+              orh:       msToHHMM(orhMs),
+              orh_h:     orhH,
+              total:     r.totalPkg || 0,
+              entregues: r.delivered || 0,
+              insucessos:r.failed || 0,
+              meta_12h:  orhMs >= 12 * 3600000 ? 'SIM' : 'NÃO'
+            });
+          });
+        });
+        return rows;
+      },
+      [
+        { key: 'driver',     label: 'Motorista' },
+        { key: 'placa',      label: 'Placa' },
+        { key: 'carrier',    label: 'Carrier' },
+        { key: 'rota',       label: 'ID Rota' },
+        { key: 'cluster',    label: 'Cluster' },
+        { key: 'status',     label: 'Status' },
+        { key: 'inicio',     label: 'Início' },
+        { key: 'fim',        label: 'Fim' },
+        { key: 'orh',        label: 'ORH' },
+        { key: 'orh_h',      label: 'ORH (h)' },
+        { key: 'total',      label: 'Total Pkg' },
+        { key: 'entregues',  label: 'Entregues' },
+        { key: 'insucessos', label: 'Insucessos' },
+        { key: 'meta_12h',   label: 'Meta 12h' }
+      ], 'ORH — ' + STATE.ssc + ' — ' + STATE.date));
+
+    // ---- LISTA DE DRIVERS ----
+    if (drivers.length === 0) {
+      dataArea.appendChild(mk('div',
+        'text-align:center;padding:40px;color:' + T.muted + ';font-style:italic',
+        'Nenhum driver com dados de tempo disponíveis.'));
+      setFooterCount(0, routes.length);
+      return;
+    }
+
+    var grid = mk('div', 'display:flex;flex-direction:column;gap:10px');
+
+    drivers.forEach(function (d) {
+      var maxOrh   = d.maxORHms;
+      var orhH     = maxOrh / 3600000;
+      var metaOk   = orhH >= 12;
+      var horaExtra = d.rotas.some(function (item) {
+        return item.r.status === 'Abertas' && item.orhMs > 12 * 3600000;
+      });
+
+      var borderColor = horaExtra ? T.warn : (metaOk ? T.ok : T.info);
+
+      var card = mk('div',
+        'background:' + T.surface + ';border:1px solid ' + T.border +
+        ';border-left:3px solid ' + borderColor + ';border-radius:10px;padding:12px 14px');
+
+      // ---- Linha 1: Driver + badges ----
+      var line1 = mk('div', 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px');
+
+      // Badge meta
+      if (metaOk) {
+        line1.appendChild(mk('span',
+          'background:rgba(16,185,129,.15);color:' + T.ok + ';font-size:10px;font-weight:700;' +
+          'padding:2px 8px;border-radius:6px', '✅ META 12h'));
+      } else if (horaExtra) {
+        line1.appendChild(mk('span',
+          'background:rgba(245,158,11,.15);color:' + T.warn + ';font-size:10px;font-weight:700;' +
+          'padding:2px 8px;border-radius:6px', '⚠️ HORA EXTRA'));
+      }
+
+      line1.appendChild(mk('div',
+        'font-size:13px;font-weight:600;color:' + T.textHi,
+        '👤 ' + escapeHTML(d.driver)));
+
+      if (d.placa) {
+        line1.appendChild(mk('span',
+          'background:rgba(6,182,212,.15);color:' + T.brand2 + ';font-size:11px;font-weight:700;' +
+          'padding:2px 8px;border-radius:6px;font-family:' + T.fMono,
+          escapeHTML(d.placa)));
+      }
+      if (d.tel) {
+        line1.appendChild(mk('span',
+          'font-size:10px;color:' + T.muted + ';font-family:' + T.fMono,
+          '📞 ' + escapeHTML(d.tel)));
+      }
+      line1.appendChild(mk('span',
+        'font-size:10px;color:' + T.muted + ';font-family:' + T.fMono + ';margin-left:auto',
+        escapeHTML(d.carrier)));
+      card.appendChild(line1);
+
+      // ---- Linha 2: ORH + Produtividade ----
+      var line2 = mk('div', 'display:flex;gap:16px;font-size:11px;flex-wrap:wrap;margin-bottom:10px');
+
+      function orhStat(lbl, val, color) {
+        return mk('div', '',
+          '<span style="color:' + T.muted + '">' + escapeHTML(lbl) + ':</span> ' +
+          '<b style="color:' + color + ';font-family:' + T.fMono + '">' +
+          escapeHTML(String(val)) + '</b>');
+      }
+
+      // ORH máximo (maior rota do driver)
+      line2.appendChild(orhStat('ORH', msToHHMM(maxOrh),
+        orhColor(maxOrh, d.rotas[0] && d.rotas[0].r.status)));
+
+      // Produtividade: entregas por hora
+      var prodHora = maxOrh > 0 ? (d.delivered / (maxOrh / 3600000)).toFixed(1) : '—';
+      line2.appendChild(orhStat('Prod/h', prodHora + ' pkg/h', T.brand2));
+
+      // Total de pacotes + entregas
+      line2.appendChild(orhStat('Total', fmt(d.totalPkg), T.text));
+      line2.appendChild(orhStat('Entregues', fmt(d.delivered), T.ok));
+      if (d.failed > 0) line2.appendChild(orhStat('Insucessos', fmt(d.failed), T.err));
+      if (d.pnr > 0)    line2.appendChild(orhStat('PNR', fmt(d.pnr), T.warn));
+
+      card.appendChild(line2);
+
+      // ---- Barra de progresso ORH (0–12h = meta) ----
+      var orhPct = Math.min(100, (maxOrh / (12 * 3600000)) * 100);
+      var orhBarColor = orhH >= 12 ? T.ok : orhH >= 8 ? T.brand2 : orhH >= 4 ? T.warn : T.muted;
+      var barWrap = mk('div',
+        'background:rgba(15,23,42,.6);border-radius:6px;height:8px;overflow:hidden;' +
+        'position:relative;margin-bottom:4px');
+      var barFill = mk('div',
+        'height:100%;width:' + orhPct.toFixed(1) + '%;background:' + orhBarColor +
+        ';transition:width .3s ease');
+      // Linha de meta (12h = 100%)
+      barWrap.appendChild(barFill);
+      card.appendChild(barWrap);
+      card.appendChild(mk('div',
+        'display:flex;justify-content:space-between;font-size:10px;color:' + T.muted +
+        ';font-family:' + T.fMono + ';margin-bottom:8px',
+        '<span>' + msToHHMM(maxOrh) + '</span>' +
+        '<span style="color:' + (metaOk ? T.ok : T.muted) + '">Meta: 12:00 h</span>'));
+
+      // ---- Detalhe de cada rota do driver ----
+      if (d.rotas.length > 0) {
+        var rotasList = mk('div',
+          'display:flex;flex-direction:column;gap:5px;padding-top:8px;' +
+          'border-top:1px dashed ' + T.border);
+
+        d.rotas.forEach(function (item, idx) {
+          var r = item.r;
+          var rOrh = item.orhMs;
+          var initStr = r.initDate  ? new Date(r.initDate).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' }) : '—';
+          var fimStr  = r.finalDate ? new Date(r.finalDate).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' }) : 'Em rota';
+
+          // Inatividade: heurística — rota aberta, sem entregas, >40min
+          var inatMs  = null;
+          if (r.status === 'Abertas' && r.initDate) {
+            inatMs = now - r.initDate;
+          }
+          var inatAlerta = r.status === 'Abertas' && (r.delivered || 0) === 0 &&
+                           (r.totalPkg || 0) > 0 && rOrh > 40 * 60000;
+
+          var statusColor =
+            r.status === 'Encerradas' ? T.ok :
+            r.status === 'Abertas'    ? T.info : T.muted;
+
+          var rotaLine = mk('div',
+            'background:rgba(15,23,42,.4);border:1px solid ' + T.border +
+            ';border-left:3px solid ' + (inatAlerta ? T.err : statusColor) +
+            ';border-radius:6px;padding:7px 10px;display:flex;align-items:center;' +
+            'gap:8px;flex-wrap:wrap;font-size:11px');
+
+          rotaLine.appendChild(mk('span',
+            'background:' + T.gradSoft + ';color:' + T.textHi + ';font-size:10px;font-weight:700;' +
+            'padding:1px 6px;border-radius:4px;font-family:' + T.fMono,
+            '#' + (idx + 1)));
+
+          rotaLine.appendChild(mk('span',
+            'font-family:' + T.fMono + ';color:' + T.textHi + ';font-weight:600',
+            escapeHTML(r.routeId)));
+
+          if (r.cluster) {
+            rotaLine.appendChild(mk('span',
+              'background:rgba(6,182,212,.15);color:' + T.brand2 +
+              ';font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px',
+              escapeHTML(r.cluster)));
+          }
+
+          rotaLine.appendChild(mk('span',
+            'color:' + T.muted + ';font-family:' + T.fMono,
+            '🕐 ' + initStr + ' → ' + fimStr));
+
+          rotaLine.appendChild(mk('span',
+            'color:' + orhColor(rOrh, r.status) + ';font-weight:700;font-family:' + T.fMono,
+            'ORH: ' + msToHHMM(rOrh)));
+
+          if (inatAlerta) {
+            rotaLine.appendChild(mk('span',
+              'background:rgba(239,68,68,.15);color:' + T.err + ';font-size:10px;font-weight:700;' +
+              'padding:2px 8px;border-radius:6px',
+              '🔴 INATIVO >40min'));
+          }
+
+          rotaLine.appendChild(mk('span',
+            'color:' + T.muted + ';font-family:' + T.fMono + ';margin-left:auto',
+            fmt(r.totalPkg) + ' pkg · ' +
+            '<span style="color:' + T.ok + '">' + fmt(r.delivered) + ' ✓</span> · ' +
+            '<span style="color:' + T.err + '">' + fmt(r.failed) + ' ✗</span>'));
+
+          rotasList.appendChild(rotaLine);
+        });
+
+        card.appendChild(rotasList);
+      }
+
+      grid.appendChild(card);
+    });
+
+    dataArea.appendChild(grid);
+    setFooterCount(drivers.length, totalDrivers);
+  }
   // ==========================================================================
   // RENDER AGENCIAS
   // ==========================================================================
@@ -3114,6 +3545,38 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
                    (r.failed || 0) + ' insuc.\n';
       });
     }
+
+    // ORH — drivers que atingiram meta >=12h
+    var now12 = Date.now();
+    var driversComORH = [];
+    var driversInativos = [];
+    routes.forEach(function (r) {
+      if (r.status === 'A caminho do destino' || !r.initDate) return;
+      var orhMs = Math.max(0, (r.finalDate || now12) - r.initDate);
+      if (orhMs >= 12 * 3600000) {
+        driversComORH.push({ driver: r.driver || '—', orh: msToHHMM(orhMs), status: r.status });
+      }
+      // Inativo: aberto, sem entrega, >40min
+      if (r.status === 'Abertas' && (r.delivered || 0) === 0 &&
+          (r.totalPkg || 0) > 0 && orhMs > 40 * 60000) {
+        driversInativos.push({ driver: r.driver || '—', orh: msToHHMM(orhMs) });
+      }
+    });
+
+    if (driversComORH.length > 0) {
+      textoWA += '\n*⏱️ ORH — Drivers ≥ 12h:*\n';
+      driversComORH.forEach(function (d) {
+        var badge = d.status === 'Encerradas' ? '✅' : '🔄';
+        textoWA += badge + ' ' + d.driver + ' — ' + d.orh + '\n';
+      });
+    }
+    if (driversInativos.length > 0) {
+      textoWA += '\n*🔴 Possíveis inativos (>40min sem baixa):*\n';
+      driversInativos.forEach(function (d) {
+        textoWA += '• ' + d.driver + ' — em rota há ' + d.orh + '\n';
+      });
+    }
+
     textoWA += '\n_Atualizado em ' + horaFmt + ' • Monitor LM v' + APP.version + '_';
 
     var modal = openModal({ title: 'Report Hora a Hora', width: '580px' });
@@ -4382,14 +4845,19 @@ function updateCountdown() {
       bags:        c.totalBags    || 0,
 
       // Datas
-      initDate:  r.initDate,
-      finalDate: r.finalDate,
+      initDate:    r.initDate,
+      finalDate:   r.finalDate,
+      lastActivityAt: r.lastActivityAt || r.lastDeliveryDate || r.lastEventDate || null,
+      orhMs:       0, // calculado abaixo
+      ozhMs:       r.ozh ? (r.ozh * 60000) : 0,
 
       // Detalhes (virão de outro endpoint depois)
       failures: [], pnrList: [], returns: [],
       failedIds: [], pnrIds: [],
 
       // Raw pra debug
+      // ORH calculado na hora do map (snapshot inicial)
+      // será recalculado ao renderizar pra pegar tempo atual
       _raw: r
     };
   }
