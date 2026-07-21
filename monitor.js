@@ -1002,66 +1002,75 @@
 
   var carrierBody = mk('tbody');
 
-  carriers.forEach(function (c, index) {
-    var row = mk('tr',
-      'background:' + (index % 2 === 0
-        ? 'rgba(30,41,59,.22)'
-        : 'rgba(15,23,42,.18)'));
+ carriers.forEach(function (c, index) {
+  var row = mk('tr',
+    'background:' + (index % 2 === 0
+      ? 'rgba(30,41,59,.22)'
+      : 'rgba(15,23,42,.18)'));
 
-    row.appendChild(tableCell(index + 1, {
-      mono: true,
-      color: T.muted,
-      weight: '700'
-    }));
+  // #
+  row.appendChild(tableCell(index + 1, {
+    mono: true,
+    color: T.muted,
+    weight: '700'
+  }));
 
-    row.appendChild(tableCell(c.name, {
-      align: 'left',
+  // Transportadora
+  row.appendChild(tableCell(c.name, {
+    align: 'left',
     color: T.textHi,
     weight: '800'
-    }));
+  }));
 
+  // DS — com guard para evitar erro se dsPct for undefined
+var cDsPct = (typeof c.dsPct === 'number' && isFinite(c.dsPct)) ? c.dsPct : 0;
+row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
+  mono: true,
+  color: dsColor(cDsPct),
+  weight: '900'
+}));
 
-row.appendChild(tableCell(fmt(c.routes), {
-      mono: true
-    }));
+  // Rotas
+  row.appendChild(tableCell(fmt(c.routes), {
+    mono: true
+  }));
 
-    row.appendChild(tableCell(fmt(c.total), {
-      mono: true,
-      color: T.textHi
-    }));
+  // Pacotes
+  row.appendChild(tableCell(fmt(c.total), {
+    mono: true,
+    color: T.textHi
+  }));
 
-    row.appendChild(tableCell(fmt(c.delivered), {
-      mono: true,
-      color: T.ok
-    }));
+  // Entregues
+  row.appendChild(tableCell(fmt(c.delivered), {
+    mono: true,
+    color: T.ok
+  }));
 
-    row.appendChild(tableCell(fmt(c.failed), {
-      mono: true,
-      color: c.failed > 0 ? T.err : T.muted
-    }));
+  // Falhas
+  row.appendChild(tableCell(fmt(c.failed), {
+    mono: true,
+    color: c.failed > 0 ? T.err : T.muted
+  }));
 
-    row.appendChild(tableCell(fmt(c.pending), {
-      mono: true,
-      color: c.pending > 0 ? T.warn : T.muted
-    }));
+  // Pendentes
+  row.appendChild(tableCell(fmt(c.pending), {
+    mono: true,
+    color: c.pending > 0 ? T.warn : T.muted
+  }));
 
-    row.appendChild(tableCell(fmt(c.bags), {
-      mono: true
-    }));
+  // Sacas
+  row.appendChild(tableCell(fmt(c.bags), {
+    mono: true
+  }));
 
-    row.appendChild(tableCell(fmt(c.spr), {
-      mono: true
-    }));
+  // SPR
+  row.appendChild(tableCell(fmt(c.spr), {
+    mono: true
+  }));
 
-    row.appendChild(tableCell(c.dsPct.toFixed(2) + '%', {
-      mono: true,
-      color: dsColor(c.dsPct),
-      weight: '900'
-    }));
-
-    carrierBody.appendChild(row);
-  });
-
+  carrierBody.appendChild(row);
+});
   carrierTable.appendChild(carrierBody);
   right.appendChild(carrierTable);
 
@@ -1137,11 +1146,12 @@ row.appendChild(tableCell(fmt(c.routes), {
       mono: true
     }));
 
-    row.appendChild(tableCell(c.dsPct.toFixed(2) + '%', {
-      mono: true,
-      color: dsColor(c.dsPct),
-      weight: '900'
-    }));
+    var cDsPct = (typeof c.dsPct === 'number' && isFinite(c.dsPct)) ? c.dsPct : 0;
+row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
+  mono: true,
+  color: dsColor(cDsPct),
+  weight: '900'
+}));
 
     cycleBody.appendChild(row);
   });
