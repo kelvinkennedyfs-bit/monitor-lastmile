@@ -106,8 +106,10 @@
   // Cor baseada no ORH (>=12h = ok/meta, <12h e rota encerrada = warn, rota aberta = info)
   function orhColor(ms, status) {
     var h = ms / 3600000;
-    if (status === 'Encerradas') return h >= 12 ? T.ok : T.warn;
-    return T.info; // ainda em andamento
+    // Meta é < 12h: abaixo = ok, acima = erro
+    if (h >= 12) return T.err;
+    if (h >= 10) return T.warn;  // chegando perto do limite
+    return status === 'Encerradas' ? T.ok : T.info;
   }
   function escapeHTML(s) {
     if (s == null) return '';
@@ -2862,7 +2864,14 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     var now = Date.now();
     // Exclui "A caminho do destino" conforme solicitado
     var routes = applyGlobalFilters(STATE.routes || []).filter(function (r) {
-      return r.status !== 'A caminho do destino' && r.initDate;
+      if (r.status === 'A caminho do destino') return false;
+      if (!r.initDate) return false;
+      // Filtra agências BRNJ da Envios Extra
+      var isEnviosExtra = String(r.carrier || '').toLowerCase().indexOf('envios extra') >= 0;
+      var isBRNJ = String(r.cluster || r.routeId || '').toUpperCase().indexOf('BRNJ') >= 0
+                || String(r.origem  || '').toUpperCase().indexOf('BRNJ') >= 0;
+      if (isEnviosExtra && isBRNJ) return false;
+      return true;
     });
 
     var f = STATE.filters.ORH;
@@ -2933,12 +2942,9 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
 
     // ---- ESTATÍSTICAS GERAIS ----
     var totalDrivers = drivers.length;
-    var metaDrivers  = drivers.filter(function (d) { return d.maxORHms >= 12 * 3600000; }).length;
-    var alertaDrivers = filtered.filter(function (r) {
-      // Rota aberta com ORH > 12h (possível horas extra não planejadas)
-      var orhMs = Math.max(0, (r.finalDate || now) - r.initDate);
-      return r.status === 'Abertas' && orhMs > 12 * 3600000;
-    }).length;
+    // Meta: ORH < 12h. Alerta: ORH >= 12h (ultrapassou o target)
+    var metaDrivers    = drivers.filter(function (d) { return d.maxORHms < 12 * 3600000; }).length;
+    var alertaDrivers  = drivers.filter(function (d) { return d.maxORHms >= 12 * 3600000; }).length;
     // Inativos: rotas Abertas com ORH > 40min sem nova baixa (estimado)
     // Como não temos lastActivityAt da API, usamos a razão entregues/total como proxy:
     // se progresso está parado (delivered = 0 e orhMs > 40min) → inativo
@@ -2975,12 +2981,12 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
       return c;
     }
     kpiBar.appendChild(orhKpi('Drivers monit.', totalDrivers, T.brand2, 'em ' + filtered.length + ' rotas'));
-    kpiBar.appendChild(orhKpi('Meta ≥ 12h', metaDrivers,
+    kpiBar.appendChild(orhKpi('Dentro da meta (<12h)', metaDrivers,
       metaDrivers > 0 ? T.ok : T.muted,
-      metaDrivers > 0 ? 'atingiram o target' : 'nenhum ainda'));
-    kpiBar.appendChild(orhKpi('Possível hora extra', alertaDrivers,
-      alertaDrivers > 0 ? T.warn : T.muted,
-      alertaDrivers > 0 ? 'rotas abertas >12h' : 'tudo ok'));
+      'ORH abaixo do limite'));
+    kpiBar.appendChild(orhKpi('Ultrapassaram 12h ⚠️', alertaDrivers,
+      alertaDrivers > 0 ? T.err : T.ok,
+      alertaDrivers > 0 ? 'acima do target!' : 'nenhum acima'));
     kpiBar.appendChild(orhKpi('Inativos (>40min)', inativosAlerta,
       inativosAlerta > 0 ? T.err : T.ok,
       inativosAlerta > 0 ? 'sem entrega registrada' : 'todos ativos'));
@@ -3096,14 +3102,15 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
       var line1 = mk('div', 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px');
 
       // Badge meta
-      if (metaOk) {
+      // Meta < 12h: verde se dentro, vermelho se ultrapassou
+      if (orhH >= 12) {
+        line1.appendChild(mk('span',
+          'background:rgba(239,68,68,.2);color:' + T.err + ';font-size:10px;font-weight:700;' +
+          'padding:2px 8px;border-radius:6px', '🔴 ULTRAPASSOU 12h'));
+      } else {
         line1.appendChild(mk('span',
           'background:rgba(16,185,129,.15);color:' + T.ok + ';font-size:10px;font-weight:700;' +
-          'padding:2px 8px;border-radius:6px', '✅ META 12h'));
-      } else if (horaExtra) {
-        line1.appendChild(mk('span',
-          'background:rgba(245,158,11,.15);color:' + T.warn + ';font-size:10px;font-weight:700;' +
-          'padding:2px 8px;border-radius:6px', '⚠️ HORA EXTRA'));
+          'padding:2px 8px;border-radius:6px', '✅ DENTRO DA META'));
       }
 
       line1.appendChild(mk('div',
@@ -3153,8 +3160,9 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
       card.appendChild(line2);
 
       // ---- Barra de progresso ORH (0–12h = meta) ----
-      var orhPct = Math.min(100, (maxOrh / (12 * 3600000)) * 100);
-      var orhBarColor = orhH >= 12 ? T.ok : orhH >= 8 ? T.brand2 : orhH >= 4 ? T.warn : T.muted;
+      // Barra: 12h = 100% (o limite). Fica vermelha ao ultrapassar
+      var orhPct = Math.min(110, (maxOrh / (12 * 3600000)) * 100); // permite ir além de 100% visualmente
+      var orhBarColor = orhH >= 12 ? T.err : orhH >= 10 ? T.warn : orhH >= 6 ? T.brand2 : T.info;
       var barWrap = mk('div',
         'background:rgba(15,23,42,.6);border-radius:6px;height:8px;overflow:hidden;' +
         'position:relative;margin-bottom:4px');
@@ -3164,11 +3172,13 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
       // Linha de meta (12h = 100%)
       barWrap.appendChild(barFill);
       card.appendChild(barWrap);
+      var orhLabel = orhH >= 12
+        ? '<span style="color:' + T.err + '">⚠️ ' + msToHHMM(maxOrh) + ' — LIMITE ULTRAPASSADO</span>'
+        : '<span>' + msToHHMM(maxOrh) + '</span>';
       card.appendChild(mk('div',
         'display:flex;justify-content:space-between;font-size:10px;color:' + T.muted +
         ';font-family:' + T.fMono + ';margin-bottom:8px',
-        '<span>' + msToHHMM(maxOrh) + '</span>' +
-        '<span style="color:' + (metaOk ? T.ok : T.muted) + '">Meta: 12:00 h</span>'));
+        orhLabel + '<span style="color:' + T.muted + '">Limite: 12:00 h</span>'));
 
       // ---- Detalhe de cada rota do driver ----
       if (d.rotas.length > 0) {
@@ -3553,6 +3563,7 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     routes.forEach(function (r) {
       if (r.status === 'A caminho do destino' || !r.initDate) return;
       var orhMs = Math.max(0, (r.finalDate || now12) - r.initDate);
+      // Alerta: quem ULTRAPASSOU 12h (meta é ficar abaixo)
       if (orhMs >= 12 * 3600000) {
         driversComORH.push({ driver: r.driver || '—', orh: msToHHMM(orhMs), status: r.status });
       }
@@ -3564,10 +3575,10 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     });
 
     if (driversComORH.length > 0) {
-      textoWA += '\n*⏱️ ORH — Drivers ≥ 12h:*\n';
+      textoWA += '\n*⚠️ ORH ultrapassados (>12h):*\n';
       driversComORH.forEach(function (d) {
-        var badge = d.status === 'Encerradas' ? '✅' : '🔄';
-        textoWA += badge + ' ' + d.driver + ' — ' + d.orh + '\n';
+        var badge = d.status === 'Encerradas' ? '🔴' : '🔄';
+        textoWA += badge + ' ' + d.driver + ' — *' + d.orh + '*\n';
       });
     }
     if (driversInativos.length > 0) {
@@ -3955,14 +3966,51 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
         t += '⚠️ *TOP 5 ROTAS OFENSORAS (GERAL)*\n';
         t += sep + '\n';
         top5.forEach(function (r, i) {
-          var ins = r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
-          t += (i + 1) + '. Rota ' + r.routeId + ' 🏢 ' + (r.carrier || '—') + '\n';
-          t += '👤 ' + (r.driver || '—') + '\n';
-          t += '🔴 ' + ins + ' insuc · 📦 ' + (r.totalPkg || 0) + ' pkg\n\n';
+        var ins = r._detailsLoaded ? (r._insucessoReal || 0) : (r.failed || 0);
+        t += (i + 1) + '. Rota ' + r.routeId + ' 🏢 ' + (r.carrier || '—') + '\n';
+        t += '👤 ' + (r.driver || '—') + '\n';
+        t += '🔴 ' + ins + ' insuc · 📦 ' + (r.totalPkg || 0) + ' pkg\n\n';
+      });
+    }
+
+    // ORH — rotas que ultrapassaram 12h
+    var nowFech = Date.now();
+    var orhUltrapassados = [];
+    allRoutes.forEach(function (r) {
+      if (!r.initDate || r.status === 'A caminho do destino') return;
+      var isEnviosExtra = String(r.carrier || '').toLowerCase().indexOf('envios extra') >= 0;
+      var isBRNJ = String(r.cluster || r.routeId || '').toUpperCase().indexOf('BRNJ') >= 0;
+      if (isEnviosExtra && isBRNJ) return;
+      var orhMs = Math.max(0, (r.finalDate || nowFech) - r.initDate);
+      if (orhMs >= 12 * 3600000) {
+        orhUltrapassados.push({
+          driver:  r.driver || '—',
+          rota:    r.routeId,
+          carrier: r.carrier || '—',
+          orh:     msToHHMM(orhMs),
+          status:  r.status
         });
       }
+    });
+    // Deduplica por driver (pega o maior ORH)
+    var orhByDriver = {};
+    orhUltrapassados.forEach(function (o) {
+      if (!orhByDriver[o.driver]) orhByDriver[o.driver] = o;
+    });
+    var orhList = Object.keys(orhByDriver).map(function (k) { return orhByDriver[k]; });
 
-      if (inpObs.value || inpAcoes.value || inpPendencia.value) {
+    if (orhList.length > 0) {
+      t += sep + '\n';
+      t += '⚠️ *ORH ULTRAPASSADOS (>12h)*\n';
+      t += sep + '\n';
+      orhList.forEach(function (o) {
+        var badge = o.status === 'Encerradas' ? '🔴' : '🔄';
+        t += badge + ' *' + o.driver + '* — ' + o.orh + '\n';
+        t += '   Rota: ' + o.rota + ' · ' + o.carrier + '\n\n';
+      });
+    }
+
+    if (inpObs.value || inpAcoes.value || inpPendencia.value) {
         t += sep + '\n';
         t += '📝 *NOTAS*\n';
         t += sep + '\n';
@@ -4844,12 +4892,13 @@ function updateCountdown() {
       residenciais: c.residential || 0,
       bags:        c.totalBags    || 0,
 
-      // Datas
-      initDate:    r.initDate,
-      finalDate:   r.finalDate,
-      lastActivityAt: r.lastActivityAt || r.lastDeliveryDate || r.lastEventDate || null,
-      orhMs:       0, // calculado abaixo
-      ozhMs:       r.ozh ? (r.ozh * 60000) : 0,
+      // Datas — API retorna em SEGUNDOS, converte pra ms
+      initDate:    r.initDate    ? r.initDate    * 1000 : null,
+      finalDate:   r.finalDate   ? r.finalDate   * 1000 : null,
+      lastActivityAt: r.lastActivityAt ? r.lastActivityAt * 1000
+                     : r.lastDeliveryDate ? r.lastDeliveryDate * 1000
+                     : r.lastEventDate   ? r.lastEventDate   * 1000
+                     : null,
 
       // Detalhes (virão de outro endpoint depois)
       failures: [], pnrList: [], returns: [],
