@@ -2812,6 +2812,9 @@
     var routes = applyGlobalFilters(STATE.routes || [])
       .filter(function (r) { return r.status !== 'A caminho do destino'; });
     var stats = getDSStats(routes);
+    var pendingDetailRoutes = routes.filter(function (r) {
+  return (r.failed || 0) > 0 && !r._detailsLoaded;
+    });
     var finished = 0, running = 0, notStarted = 0;
     routes.forEach(function (r) {
       if (r.status === 'Encerradas') finished++;
@@ -2859,7 +2862,13 @@
       '✅ *Entregues:* ' + fmt(stats.delivered) + ' (' + stats.dsPct.toFixed(1) + '%)\n' +
       '⏳ *Pendentes:* ' + fmt(pendentes) + '\n' +
       '🔴 *Insucessos:* ' + fmt(stats.failed) +
-        (stats.naoAgencia > 0 ? '  _(+' + stats.naoAgencia + ' Coleta)_' : '') + '\n' +
+  (stats.naoAgencia > 0
+    ? '  _(+' + fmt(stats.naoAgencia) + ' Coleta)_'
+    : '') +
+  (pendingDetailRoutes.length > 0
+    ? '  ⚠️ _(' + pendingDetailRoutes.length + ' rota(s) aguardando detalhes)_'
+    : '') +
+  '\n' +
       '🟡 *PNR:* ' + fmt(stats.pnr) + '\n\n' +
       '*🎯 DS Operacional:* ' + dsEmoji + ' *' + stats.dsPct.toFixed(2) + '%*\n\n' +
       '*🛣️ Rotas:* ' + routes.length + ' total\n' +
@@ -4175,7 +4184,7 @@ function updateCountdown() {
 
       // === NOVO: busca motivos de insucesso das rotas ofensoras (async, não bloqueia) ===
       var routesComInsucesso = (STATE.routes || []).filter(function (r) {
-        return (r.failed || 0) > 0 && (!r.failures || r.failures.length === 0);
+  return (r.failed || 0) > 0 && !r._detailsLoaded;
       });
       if (routesComInsucesso.length > 0) {
         console.log('[MLM] Buscando detalhes de ' + routesComInsucesso.length + ' rotas com insucesso...');
@@ -4265,38 +4274,58 @@ function updateCountdown() {
   }
 
   function fetchRouteDetail(routeId) {
-    if (_detailCache[routeId]) return Promise.resolve(_detailCache[routeId]);
-    var url = ROUTE_DETAIL_URL + '?routeId=' + encodeURIComponent(routeId) + '&siteId=MLB';
-    return throttledFetch(url, {
-      method: 'GET',
-      credentials: 'include',
-      headers: { 'Accept': 'application/json' }
-    }).then(function (resp) { return resp.json(); }).then(function (data) {
-      _detailCache[routeId] = data;
-      // DEBUG: loga primeira rota pra inspecionar estrutura
-      if (!window.__MLM_DETAIL_LOGGED) {
-        window.__MLM_DETAIL_LOGGED = true;
-        console.log('[MLM DEBUG] Route detail cru:', routeId, data);
-        // Loga todos os incidentDescription encontrados
-        var motivos = [];
-        var stops = (data && data.stops) || [];
-        stops.forEach(function (s) {
-          (s.orders || []).forEach(function (o) {
-            (o.transportUnits || []).forEach(function (tu) {
-              motivos.push({
-                pkg: tu.printedLabel,
-                status: tu.status,
-                substatus: tu.relatedEntity && tu.relatedEntity.substatus,
-                incidentDescription: tu.incidentDescription
-              });
+  if (_detailCache[routeId]) {
+    return Promise.resolve(_detailCache[routeId]);
+  }
+
+  var url = ROUTE_DETAIL_URL +
+    '?routeId=' + encodeURIComponent(routeId) +
+    '&siteId=MLB';
+
+  return throttledFetch(url, {
+    method: 'GET',
+    credentials: 'include',
+    headers: { 'Accept': 'application/json' }
+  })
+  .then(function (resp) {
+    return resp.json();
+  })
+  .then(function (data) {
+    // Não salva no cache uma resposta vazia ou incompleta
+    if (!data || !Array.isArray(data.stops)) {
+      delete _detailCache[routeId];
+      throw new Error('Resposta de detalhe inválida para a rota ' + routeId);
+    }
+
+    _detailCache[routeId] = data;
+
+    // DEBUG: loga a primeira rota para inspecionar a estrutura
+    if (!window.__MLM_DETAIL_LOGGED) {
+      window.__MLM_DETAIL_LOGGED = true;
+
+      console.log('[MLM DEBUG] Route detail cru:', routeId, data);
+
+      var motivos = [];
+
+      data.stops.forEach(function (s) {
+        (s.orders || []).forEach(function (o) {
+          (o.transportUnits || []).forEach(function (tu) {
+            motivos.push({
+              pkg: tu.printedLabel,
+              status: tu.status,
+              substatus: tu.relatedEntity && tu.relatedEntity.substatus,
+              incidentDescription: tu.incidentDescription
             });
           });
         });
-        console.table(motivos);
-      }
-      return data;
-    });
-  }
+      });
+
+      console.table(motivos);
+    }
+
+    return data;
+  });
+}
 
   // Extrai motivos de insucesso do JSON de detalhe
   function extractFailures(detail) {
@@ -4358,10 +4387,18 @@ function updateCountdown() {
           falhasSeguidas = 0;
           return { routeId: r.routeId, ok: true, count: r.failures.length };
         }).catch(function (err) {
-          console.warn('[MLM] Falha detail ' + r.routeId + ':', err.message);
-          falhasSeguidas++;
-          return { routeId: r.routeId, ok: false, error: err.message };
-        });
+  console.warn('[MLM] Falha detail ' + r.routeId + ':', err.message);
+
+  r._detailsLoaded = false;
+  r._detailsError = err.message || String(err);
+  falhasSeguidas++;
+
+  return {
+    routeId: r.routeId,
+    ok: false,
+    error: r._detailsError
+  };
+});
       })).then(function (batchResults) {
         results = results.concat(batchResults);
 
@@ -4386,6 +4423,68 @@ function updateCountdown() {
     }
     return processBatch();
   }
+  function retryPendingRouteDetails() {
+  var pendingRoutes = (STATE.routes || []).filter(function (r) {
+    return (r.failed || 0) > 0 && !r._detailsLoaded;
+  });
+
+  if (pendingRoutes.length === 0) {
+    toast('Nenhuma rota aguardando detalhes', 'info');
+    return Promise.resolve([]);
+  }
+
+  pendingRoutes.forEach(function (r) {
+    // Descarta resposta anterior para forçar nova consulta
+    delete _detailCache[r.routeId];
+    delete r._detailsError;
+  });
+
+  toast(
+    'Tentando novamente ' + pendingRoutes.length + ' rota(s)...',
+    'info'
+  );
+
+  showProgress('detalhes', 0, pendingRoutes.length);
+
+  return fetchAllFailures(pendingRoutes)
+    .then(function (results) {
+      var ok = results.filter(function (result) {
+        return result.ok;
+      }).length;
+
+      var falhou = results.length - ok;
+
+      renderKPIs();
+
+      if (!STATE.ui.openDropdown) {
+        renderDataOnly();
+      }
+
+      hideProgress(
+        falhou === 0
+          ? '✅ Todos os detalhes carregados'
+          : '⚠️ ' + falhou + ' rota(s) ainda pendentes'
+      );
+
+      toast(
+        ok + '/' + results.length + ' rota(s) processadas',
+        falhou === 0 ? 'ok' : 'warn'
+      );
+
+      return results;
+    })
+    .catch(function (err) {
+      hideProgress('❌ Erro ao tentar novamente');
+      toast(
+        'Erro ao recarregar detalhes: ' + (err.message || err),
+        'err'
+      );
+      throw err;
+    });
+}
+
+// Permite acionar manualmente pelo console
+APP.retryPendingDetails = retryPendingRouteDetails;
   // ==========================================================================
   // BIND + INIT
   // ==========================================================================
