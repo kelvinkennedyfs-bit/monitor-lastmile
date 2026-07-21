@@ -2859,7 +2859,7 @@
       '✅ *Entregues:* ' + fmt(stats.delivered) + ' (' + stats.dsPct.toFixed(1) + '%)\n' +
       '⏳ *Pendentes:* ' + fmt(pendentes) + '\n' +
       '🔴 *Insucessos:* ' + fmt(stats.failed) +
-        (statsSVC.naoAgencia > 0 ? '  _(+' + statsSVC.naoAgencia + ' Coleta)_' : '') + '\n' +
+        (stats.naoAgencia > 0 ? '  _(+' + stats.naoAgencia + ' Coleta)_' : '') + '\n' +
       '🟡 *PNR:* ' + fmt(stats.pnr) + '\n\n' +
       '*🎯 DS Operacional:* ' + dsEmoji + ' *' + stats.dsPct.toFixed(2) + '%*\n\n' +
       '*🛣️ Rotas:* ' + routes.length + ' total\n' +
