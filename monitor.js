@@ -985,14 +985,14 @@
   [
     ['#', 'center'],
     ['Transportadora', 'left'],
+    ['DS', 'center'],
     ['Rotas', 'center'],
     ['Pacotes', 'center'],
     ['Entregues', 'center'],
     ['Falhas', 'center'],
     ['Pend.', 'center'],
     ['Sacas', 'center'],
-    ['SPR', 'center'],
-    ['DS', 'center']
+    ['SPR', 'center']
   ].forEach(function (item) {
     carrierHeadRow.appendChild(tableHeader(item[0], item[1]));
   });
@@ -1016,11 +1016,12 @@
 
     row.appendChild(tableCell(c.name, {
       align: 'left',
-      color: T.textHi,
-      weight: '800'
+    color: T.textHi,
+    weight: '800'
     }));
 
-    row.appendChild(tableCell(fmt(c.routes), {
+
+row.appendChild(tableCell(fmt(c.routes), {
       mono: true
     }));
 
@@ -3756,37 +3757,75 @@
     throw new Error('Elemento sem dimensões válidas');
   }
 
-  var cloned = el.cloneNode(true);
+  var clone = el.cloneNode(true);
 
-  cloned.style.width = width + 'px';
-  cloned.style.height = height + 'px';
-  cloned.style.margin = '0';
-  cloned.style.transform = 'none';
-  cloned.style.maxWidth = 'none';
+  clone.style.width = width + 'px';
+  clone.style.height = height + 'px';
+  clone.style.margin = '0';
+  clone.style.maxWidth = 'none';
+  clone.style.transform = 'none';
+  clone.style.position = 'relative';
+  clone.style.left = '0';
+  clone.style.top = '0';
 
-  var serializer = new XMLSerializer();
-  var htmlContent = serializer.serializeToString(cloned);
+  /*
+   * Remove recursos que podem contaminar o canvas.
+   * O dashboard é composto por texto, tabelas, cores e gradientes,
+   * portanto essas tags não são necessárias para a imagem final.
+   */
+  Array.prototype.slice.call(
+    clone.querySelectorAll('img,canvas,video,iframe,object,embed')
+  ).forEach(function (node) {
+    if (node.parentNode) {
+      node.parentNode.removeChild(node);
+    }
+  });
+
+  /*
+   * Remove URLs externas eventualmente presentes em estilos.
+   * Gradientes CSS são preservados porque não usam url(...).
+   */
+  var allNodes = [clone].concat(
+    Array.prototype.slice.call(clone.querySelectorAll('*'))
+  );
+
+  allNodes.forEach(function (node) {
+    if (!node.style) return;
+
+    var backgroundImage = node.style.backgroundImage || '';
+
+    if (/url\s*\(/i.test(backgroundImage)) {
+      node.style.backgroundImage = 'none';
+    }
+
+    var background = node.style.background || '';
+
+    if (/url\s*\(/i.test(background)) {
+      node.style.background = node.style.backgroundColor || 'transparent';
+    }
+
+    node.style.fontFamily = node.style.fontFamily ||
+      'Arial, "Segoe UI", sans-serif';
+  });
+
+  var htmlContent = new XMLSerializer().serializeToString(clone);
 
   var svg =
     '<svg xmlns="http://www.w3.org/2000/svg" ' +
-    'xmlns:xlink="http://www.w3.org/1999/xlink" ' +
     'width="' + width + '" height="' + height + '" ' +
     'viewBox="0 0 ' + width + ' ' + height + '">' +
       '<foreignObject x="0" y="0" width="' + width + '" height="' + height + '">' +
         '<div xmlns="http://www.w3.org/1999/xhtml" ' +
         'style="width:' + width + 'px;height:' + height +
-        'px;margin:0;padding:0;overflow:hidden;">' +
+        'px;margin:0;padding:0;overflow:hidden;' +
+        'font-family:Arial,Segoe UI,sans-serif;">' +
           htmlContent +
         '</div>' +
       '</foreignObject>' +
     '</svg>';
 
-  var blob = new Blob([svg], {
-    type: 'image/svg+xml;charset=utf-8'
-  });
-
   return {
-    url: URL.createObjectURL(blob),
+    svg: svg,
     width: width,
     height: height
   };
@@ -3798,7 +3837,7 @@ function downloadElementAsImage(targetEl, filename) {
     return;
   }
 
-  toast('Gerando imagem...', 'info');
+  toast('Gerando PNG...', 'info');
 
   var svgData;
 
@@ -3813,9 +3852,14 @@ function downloadElementAsImage(targetEl, filename) {
   var img = new Image();
 
   img.onload = function () {
+    var canvas = document.createElement('canvas');
+
     try {
+      /*
+       * 2x gera aproximadamente 2560 px de largura,
+       * suficiente para leitura e compartilhamento no WhatsApp.
+       */
       var scale = 2;
-      var canvas = document.createElement('canvas');
 
       canvas.width = Math.round(svgData.width * scale);
       canvas.height = Math.round(svgData.height * scale);
@@ -3842,31 +3886,36 @@ function downloadElementAsImage(targetEl, filename) {
       );
 
       canvas.toBlob(function (blob) {
-        URL.revokeObjectURL(svgData.url);
-
         if (!blob) {
-          toast('Falha ao gerar o arquivo PNG', 'err');
+          toast('O navegador não conseguiu criar o PNG', 'err');
           return;
         }
 
-        downloadBlob(blob, filename);
-        toast('Imagem baixada!', 'ok');
+        var pngFilename = String(filename || 'dashboard.png')
+          .replace(/\.[^.]+$/, '.png');
+
+        downloadBlob(blob, pngFilename);
+        toast('Imagem PNG baixada!', 'ok');
       }, 'image/png', 1);
 
     } catch (err) {
-      URL.revokeObjectURL(svgData.url);
-      console.error('[MLM] Erro ao desenhar imagem:', err);
-      toast('Erro ao desenhar imagem: ' + err.message, 'err');
+      console.error('[MLM] Erro ao exportar PNG:', err);
+      toast('Erro ao gerar PNG: ' + err.message, 'err');
     }
   };
 
   img.onerror = function (event) {
-    URL.revokeObjectURL(svgData.url);
     console.error('[MLM] Erro ao carregar SVG:', event);
-    toast('Erro ao carregar o conteúdo da imagem', 'err');
+    toast('Erro ao preparar o conteúdo do PNG', 'err');
   };
 
-  img.src = svgData.url;
+  /*
+   * Carrega o SVG como data URL textual. Isso evita o blob URL
+   * que estava sendo considerado origem externa no canvas.
+   */
+  img.src =
+    'data:image/svg+xml;charset=utf-8,' +
+    encodeURIComponent(svgData.svg);
 }
   function safeName(s) {
     return String(s || 'export').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').slice(0, 80);
