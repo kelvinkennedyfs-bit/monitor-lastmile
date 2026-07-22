@@ -620,20 +620,26 @@
   function recomputeRouteCounters(r) {
     if (!r) return;
     var insucessoReal = 0, foraDS = 0, transferidos = 0, naoAgencia = 0;
+    var coletaFalha = 0;   // ← NOVO: coletas com insucesso (first_mile)
 
     (r.failures || []).forEach(function (f) {
+      // Coletas (first_mile/pickup) NUNCA entram no DS — contabiliza separado
+      if (f.isColeta) {
+        coletaFalha++;
+        return;
+      }
       var cat = categorizeFailure(f);
-      if (cat === 'transferido')      { transferidos++; foraDS++; }
-      else if (cat === 'agencia')     { naoAgencia++;   foraDS++; }
-      else                            { insucessoReal++; }
+      if (cat === 'transferido')  { transferidos++; foraDS++; }
+      else if (cat === 'agencia') { naoAgencia++;   foraDS++; }
+      else                        { insucessoReal++; }
     });
 
-    r._insucessoReal = insucessoReal;
-    r._foraDS = foraDS;
-    r._transferidos = transferidos;
-    r._naoAgencia = naoAgencia;
-    r._detailsLoaded = true;
-    // NÃO mexe em r.failed — deixa o valor original da API pra usar como fallback
+    r._insucessoReal  = insucessoReal;
+    r._foraDS         = foraDS;
+    r._transferidos   = transferidos;
+    r._naoAgencia     = naoAgencia;
+    r._coletaFalha    = coletaFalha;   // ← NOVO
+    r._detailsLoaded  = true;
   }
   // Recalcula totais considerando as regras do DS operacional:
   // - DS = Entregues / (Entregues + Insucessos reais)
@@ -644,6 +650,7 @@
   function getDSStats(routes) {
     var total = 0, delivered = 0, failed = 0, pnr = 0;
     var pending = 0, transferidos = 0, naoAgencia = 0, foraDS = 0;
+    var coletaFalha = 0;   // ← NOVO
     var pctACaminho = 0;
 
     routes.forEach(function (r) {
@@ -661,6 +668,7 @@
         transferidos += r._transferidos  || 0;
         naoAgencia   += r._naoAgencia    || 0;
         foraDS       += r._foraDS        || 0;
+        coletaFalha  += r._coletaFalha   || 0;   // ← NOVO
       } else {
         failed += r.failed || 0;
       }
@@ -677,7 +685,8 @@
     return {
       total: total, delivered: delivered, failed: failed, pnr: pnr,
       pending: pending, transferidos: transferidos, naoAgencia: naoAgencia,
-      foraDS: foraDS, pctACaminho: pctACaminho, baseDS: baseDS, dsPct: dsPct
+      foraDS: foraDS, coletaFalha: coletaFalha,   // ← NOVO
+      pctACaminho: pctACaminho, baseDS: baseDS, dsPct: dsPct
     };
   }
   // Fórmula única de DS — usada em TODO o sistema (KPI, rotas, carriers, fechamento, dashboard)
@@ -1282,8 +1291,9 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     // INSUCESSOS (só os reais — sem transferidos e sem "não estão na agência")
     var insPct = s.baseDS > 0 ? (s.failed / s.baseDS) * 100 : 0;
     var subFailed = insPct.toFixed(2) + '%';
-    if (s.transferidos > 0) subFailed += ' · +' + s.transferidos + ' transf';
-    if (s.naoAgencia > 0)   subFailed += ' · +' + s.naoAgencia + ' agência';
+    if (s.transferidos > 0)  subFailed += ' · +' + s.transferidos + ' transf';
+    if (s.naoAgencia > 0)    subFailed += ' · +' + s.naoAgencia + ' agência';
+    if (s.coletaFalha > 0)   subFailed += ' · +' + s.coletaFalha + ' coleta';
     set('failed', fmt(s.failed), subFailed,
         insPct <= 3 ? T.ok : insPct <= 5 ? T.warn : T.err, insPct > 7);
 
@@ -2226,8 +2236,16 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     var motivosCount = {};
     var motivosForaDS = {};
     var totalComMotivo = 0;
+    var motivosColeta = {};   // ← NOVO: motivos de coleta separados
+
     routesComOcorrencia.forEach(function (r) {
       (r.failures || []).forEach(function (f) {
+        // Coletas ficam numa contagem separada, fora do DS
+        if (f.isColeta) {
+          var mc = f.reason || 'Sem motivo';
+          motivosColeta[mc] = (motivosColeta[mc] || 0) + 1;
+          return;
+        }
         var m = f.reason || 'Sem motivo';
         motivosCount[m] = (motivosCount[m] || 0) + 1;
         if (isInsucessoForaDoDS(f.reason)) {
@@ -2375,7 +2393,51 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     tbl.appendChild(tbody);
     topCard.appendChild(tbl);
     dataArea.appendChild(topCard);
+    
+    // === CARD COLETAS COM FALHA ===
+    var coletasArr = Object.keys(motivosColeta).map(function (k) {
+      return { motivo: k, qtd: motivosColeta[k] };
+    }).sort(function (a, b) { return b.qtd - a.qtd; });
 
+    if (coletasArr.length > 0) {
+      var totalColetas = coletasArr.reduce(function (s, c) { return s + c.qtd; }, 0);
+      var coletaCard = mk('div',
+        'background:' + T.surface + ';border:1px solid ' + T.border +
+        ';border-left:3px solid ' + T.brand2 + ';border-radius:10px;padding:12px 14px;margin-bottom:14px');
+      coletaCard.appendChild(mk('div',
+        'font-size:12px;font-weight:600;color:' + T.textHi + ';margin-bottom:4px',
+        '📦 Falhas de Coleta (first_mile) — ' + fmt(totalColetas) + ' pacotes'));
+      coletaCard.appendChild(mk('div',
+        'font-size:10px;color:' + T.muted + ';margin-bottom:10px',
+        'Coletas com insucesso não entram no DS operacional'));
+
+      var cTbl = mk('table', 'width:100%;border-collapse:separate;border-spacing:0;font-size:12px');
+      var cThead = mk('thead'); var cTrh = mk('tr');
+      ['Motivo', 'Qtd', '%'].forEach(function (h) {
+        cTrh.appendChild(mk('th',
+          'padding:7px 10px;text-align:left;font-size:10px;color:' + T.muted +
+          ';font-weight:600;text-transform:uppercase;border-bottom:1px solid ' + T.border, h));
+      });
+      cThead.appendChild(cTrh); cTbl.appendChild(cThead);
+      var cTbody = mk('tbody');
+      coletasArr.forEach(function (c) {
+        var tr = mk('tr');
+        tr.appendChild(mk('td',
+          'padding:7px 10px;color:' + T.textHi + ';border-bottom:1px solid ' + T.border,
+          escapeHTML(c.motivo)));
+        tr.appendChild(mk('td',
+          'padding:7px 10px;color:' + T.brand2 + ';font-family:' + T.fMono +
+          ';font-weight:600;border-bottom:1px solid ' + T.border, fmt(c.qtd)));
+        tr.appendChild(mk('td',
+          'padding:7px 10px;color:' + T.muted + ';font-family:' + T.fMono +
+          ';border-bottom:1px solid ' + T.border,
+          totalColetas > 0 ? ((c.qtd / totalColetas) * 100).toFixed(1) + '%' : '—'));
+        cTbody.appendChild(tr);
+      });
+      cTbl.appendChild(cTbody);
+      coletaCard.appendChild(cTbl);
+      dataArea.appendChild(coletaCard);
+    }
     // === EXPORT ===
     dataArea.appendChild(exportBar('INSUCESSOS',
       function () {
@@ -5224,28 +5286,33 @@ function updateCountdown() {
     stops.forEach(function (stop) {
       (stop.orders || []).forEach(function (order) {
         (order.transportUnits || []).forEach(function (tu) {
-          var reason = String(tu.incidentDescription || '').trim();
-          var subst = String((tu.relatedEntity && tu.relatedEntity.substatus) || '').toLowerCase();
-          var stAtus = String(tu.status || '').toLowerCase();
+          var reason  = String(tu.incidentDescription || '').trim();
+          var subst   = String((tu.relatedEntity && tu.relatedEntity.substatus) || '').toLowerCase();
+          var stAtus  = String(tu.status || '').toLowerCase();
+          var tuType  = String(tu.type || '').toLowerCase();        // 'first_mile' ou 'last_mile'
+          var ordType = String(order.type || '').toLowerCase();     // 'pickup' ou 'distribution'
 
-          // ENTREGUE — pula
+          // Entregue com sucesso — pula
           if (stAtus === 'delivered' || subst === 'delivered' || subst.indexOf('delivered') >= 0) {
             return;
           }
-
-          // Sem incidentDescription = pacote pendente/aguardando — pula
-          // (o ML só preenche incidentDescription quando há OCORRÊNCIA real)
+          // Sem motivo — pula
           if (!reason) return;
 
-          // Tem motivo — é uma ocorrência
+          // Determina se é coleta (first_mile/pickup) ou entrega (last_mile/distribution)
+          var isColeta = (tuType === 'first_mile') || (ordType === 'pickup');
+
           failures.push({
-            packageId: tu.printedLabel || (tu.relatedEntity && tu.relatedEntity.id) || '',
+            packageId:  tu.printedLabel || (tu.relatedEntity && tu.relatedEntity.id) || '',
             shipmentId: tu.relatedEntity && tu.relatedEntity.id,
-            reason: reason,
-            status: tu.status,
-            substatus: subst,
-            address: stop.stopAddress || '',
-            sequence: stop.sequence
+            reason:     reason,
+            status:     tu.status,
+            substatus:  subst,
+            address:    stop.stopAddress || '',
+            sequence:   stop.sequence,
+            isColeta:   isColeta,   // ← NOVO: true = coleta, false = entrega
+            tuType:     tuType,
+            orderType:  ordType
           });
         });
       });
