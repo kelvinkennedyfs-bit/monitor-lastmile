@@ -996,12 +996,20 @@
     ';font-size:11px;font-weight:800',
     'INSUCESSO: ' + pctInsucesso.toFixed(2) + '%'));
 
+  if (stats.coletaFalha > 0) {
+    extraStats.appendChild(mk('div',
+      'background:rgba(6,182,212,.09);border:1px solid rgba(6,182,212,.25)' +
+      ';border-radius:8px;padding:8px 10px;color:' + T.brand2 +
+      ';font-size:11px;font-weight:750',
+      '📦 FALHAS COLETA (first_mile): ' + fmt(stats.coletaFalha)));
+  }
+
   if (stats.naoAgencia > 0) {
     extraStats.appendChild(mk('div',
       'background:rgba(148,163,184,.09);border:1px solid ' + T.border +
       ';border-radius:8px;padding:8px 10px;color:' + T.mutedHi +
       ';font-size:11px;font-weight:750',
-      'COLETAS: ' + fmt(stats.naoAgencia)));
+      'NÃO ESTÃO NA AGÊNCIA: ' + fmt(stats.naoAgencia)));
   }
 
   if (stats.transferidos > 0) {
@@ -3590,8 +3598,11 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
       '✅ *Entregues:* ' + fmt(stats.delivered) + ' (' + stats.dsPct.toFixed(1) + '%)\n' +
       '⏳ *Pendentes:* ' + fmt(pendentes) + '\n' +
       '🔴 *Insucessos:* ' + fmt(stats.failed) +
+  (stats.coletaFalha > 0
+    ? '  _(+' + fmt(stats.coletaFalha) + ' coleta first_mile)_'
+    : '') +
   (stats.naoAgencia > 0
-    ? '  _(+' + fmt(stats.naoAgencia) + ' Coleta)_'
+    ? '  _(+' + fmt(stats.naoAgencia) + ' não agência)_'
     : '') +
   (pendingDetailRoutes.length > 0
     ? '  ⚠️ _(' + pendingDetailRoutes.length + ' rota(s) aguardando detalhes)_'
@@ -3960,7 +3971,8 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
       t += '• Entregues: ' + fmt(statsSVC.delivered) + ' ✅\n';
       t += '• Pendentes: ' + fmt(pendSVC) + ' ⏳\n';
       t += '• Insucessos: ' + fmt(statsSVC.failed) + ' 🔴\n';
-      if (statsSVC.naoAgencia > 0) t += '• Insucessos de coleta: ' + fmt(statsSVC.naoAgencia) + ' ⚪\n';
+      if (statsSVC.coletaFalha > 0) t += '• Falhas de coleta (first_mile): ' + fmt(statsSVC.coletaFalha) + ' 📦\n';
+      if (statsSVC.naoAgencia > 0)  t += '• Não estão na agência: ' + fmt(statsSVC.naoAgencia) + ' ⚪\n';
       t += '• PNR: ' + fmt(statsSVC.pnr) + ' 🟡\n';
       t += '\n';
       t += '🎯 *DS Operacional: ' + statsSVC.dsPct.toFixed(2) + '%* ' + emojiDS(statsSVC.dsPct) + '\n';
@@ -4043,7 +4055,11 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     allRoutes.forEach(function (r) {
       if (!r.initDate || r.status === 'A caminho do destino') return;
       // Envios Extra: só origens SRJ3/ERJ2/ERJ5
-      if (isEnviosExtra(r) && !isOrigemValidaEnviosExtra(r)) return;
+      var _isEE = String(r.carrier || '').toLowerCase().indexOf('envios extra') >= 0;
+      var _origemOk = ['SRJ3','ERJ2','ERJ5'].some(function(o) {
+        return String(r.origem || '').toUpperCase().indexOf(o) >= 0;
+      });
+      if (_isEE && !_origemOk) return;
       var orhMs = Math.max(0, (r.finalDate || nowFech) - r.initDate);
       if (orhMs >= 12 * 3600000) {
         orhUltrapassados.push({
