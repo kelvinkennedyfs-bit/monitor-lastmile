@@ -3644,16 +3644,38 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     function baseRoutes() {
       return (STATE.routes || []).filter(function (r) { return r.status !== 'A caminho do destino'; });
     }
-    function geralRoutes() { return baseRoutes(); }
+    // GERAL: todas as rotas, mas Envios Extra só com origem SRJ3/ERJ2/ERJ5
+    function geralRoutes() { return filtrarEnviosExtraAgencia(baseRoutes()); }
+    // SVC: origem do SSC atual, mesma regra Envios Extra
     function svcRoutes() {
-      return baseRoutes().filter(function (r) {
+      return filtrarEnviosExtraAgencia(baseRoutes()).filter(function (r) {
         return normalizeOrigem(r.origem) === normalizeOrigem(STATE.ssc);
       });
     }
     // SVC do Dashboard Visual: TODAS as origens, EXCETO ERJ2 e ERJ5
     var DASHBOARD_SVC_EXCLUDE = ['ERJ2', 'ERJ5'];
+    // Origens válidas para Envios Extra no fechamento
+    var ENVIOS_EXTRA_ORIGENS_OK = ['SRJ3', 'ERJ2', 'ERJ5'];
+
+    function isEnviosExtra(r) {
+      return String(r.carrier || '').toLowerCase().indexOf('envios extra') >= 0;
+    }
+    function isOrigemValidaEnviosExtra(r) {
+      var origem = String(r.origem || r.origin || '').toUpperCase().trim();
+      for (var i = 0; i < ENVIOS_EXTRA_ORIGENS_OK.length; i++) {
+        if (origem.indexOf(ENVIOS_EXTRA_ORIGENS_OK[i]) >= 0) return true;
+      }
+      return false;
+    }
+    function filtrarEnviosExtraAgencia(routes) {
+      return routes.filter(function (r) {
+        // Se for Envios Extra, só mantém se a origem for SRJ3/ERJ2/ERJ5
+        if (isEnviosExtra(r)) return isOrigemValidaEnviosExtra(r);
+        return true;
+      });
+    }
     function dashboardSvcRoutes() {
-      return baseRoutes().filter(function (r) {
+      return filtrarEnviosExtraAgencia(baseRoutes()).filter(function (r) {
         var o = normalizeOrigem(r.origem);
         return DASHBOARD_SVC_EXCLUDE.indexOf(o) < 0;
       });
@@ -3861,8 +3883,9 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
       var origensBreakdown = getOrigemBreakdown(allRoutes);
       var svcR = svcRoutes();
       var statsSVC = getDSStats(svcR);
+      // MEE: Envios Extra apenas com origens SRJ3/ERJ2/ERJ5
       var meeRoutes = allRoutes.filter(function (r) {
-        return String(r.carrier || '').toLowerCase().indexOf('envios extra') >= 0;
+        return isEnviosExtra(r) && isOrigemValidaEnviosExtra(r);
       });
       var statsMEE = getDSStats(meeRoutes);
 
@@ -3978,9 +4001,8 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     var orhUltrapassados = [];
     allRoutes.forEach(function (r) {
       if (!r.initDate || r.status === 'A caminho do destino') return;
-      var isEnviosExtra = String(r.carrier || '').toLowerCase().indexOf('envios extra') >= 0;
-      var isBRNJ = String(r.cluster || r.routeId || '').toUpperCase().indexOf('BRNJ') >= 0;
-      if (isEnviosExtra && isBRNJ) return;
+      // Envios Extra: só origens SRJ3/ERJ2/ERJ5
+      if (isEnviosExtra(r) && !isOrigemValidaEnviosExtra(r)) return;
       var orhMs = Math.max(0, (r.finalDate || nowFech) - r.initDate);
       if (orhMs >= 12 * 3600000) {
         orhUltrapassados.push({
