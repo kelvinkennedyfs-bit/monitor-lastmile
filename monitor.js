@@ -2962,10 +2962,19 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
       }
       if (f.alerta !== 'all') {
         var orhMs = Math.max(0, (r.finalDate || now) - r.initDate);
-        var min = orhMs / 60000;
+        var min   = orhMs / 60000;
         var horas = orhMs / 3600000;
         if (f.alerta === 'meta'    && horas < 12)  return false;
         if (f.alerta === 'critico' && min < 60)    return false;
+        // Inativos: rota Aberta + sem nenhuma entrega + >40min em rota
+        if (f.alerta === 'inativos') {
+          var ehInativo = r.inactivityAlert ||
+                          (r.status === 'Abertas' &&
+                           (r.delivered || 0) === 0 &&
+                           (r.totalPkg  || 0) > 0   &&
+                           min > 40);
+          if (!ehInativo) return false;
+        }
       }
       return true;
     });
@@ -2974,7 +2983,10 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     var byDriver = {};
     filtered.forEach(function (r) {
       var key = r.driver || '— Sem motorista —';
-      var orhMs = Math.max(0, (r.finalDate || now) - r.initDate);
+      // Usa ORH real da API se disponível, senão calcula pelo initDate
+      var orhMs = r.orhMs != null
+        ? r.orhMs
+        : (r.initDate ? Math.max(0, (r.finalDate || now) - r.initDate) : 0);
       if (!byDriver[key]) {
         byDriver[key] = {
           driver: key,
@@ -3019,12 +3031,16 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     // Como não temos lastActivityAt da API, usamos a razão entregues/total como proxy:
     // se progresso está parado (delivered = 0 e orhMs > 40min) → inativo
     var inativosAlerta = filtered.filter(function (r) {
+      // Prioridade: flag real da API
+      if (r.inactivityAlert) return true;
+      // Fallback heurístico
       if (r.status !== 'Abertas') return false;
-      var orhMs = Math.max(0, now - r.initDate);
-      if (orhMs < 40 * 60000) return false; // menos de 40min → ok
-      // Heurística: rota aberta + sem nenhuma entrega + tempo > 40min
-      if ((r.delivered || 0) === 0 && (r.totalPkg || 0) > 0) return true;
-      return false;
+      var rOrhMs = r.orhMs != null
+        ? r.orhMs
+        : (r.initDate ? Math.max(0, now - r.initDate) : 0);
+      return (r.delivered || 0) === 0 &&
+             (r.totalPkg  || 0) > 0   &&
+             rOrhMs > 40 * 60000;
     }).length;
 
     // ---- HEADER ----
@@ -3088,9 +3104,10 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     grpStatus.appendChild(segBtn('Encerradas', 'status', 'encerradas'));
     var grpAlerta = mk('div', 'display:flex;gap:4px;align-items:center;margin-left:12px');
     grpAlerta.appendChild(mk('span', 'font-size:9px;color:' + T.muted + ';font-weight:600;margin-right:2px', 'FILTRO'));
-    grpAlerta.appendChild(segBtn('Todos', 'alerta', 'all'));
-    grpAlerta.appendChild(segBtn('Meta ≥12h', 'alerta', 'meta'));
-    grpAlerta.appendChild(segBtn('Críticos >60min', 'alerta', 'critico'));
+    grpAlerta.appendChild(segBtn('Todos',            'alerta', 'all'));
+    grpAlerta.appendChild(segBtn('Ultrapassou 12h',  'alerta', 'meta'));
+    grpAlerta.appendChild(segBtn('Críticos >60min',  'alerta', 'critico'));
+    grpAlerta.appendChild(segBtn('🔴 Inativos >40min', 'alerta', 'inativos'));
     segWrap.appendChild(grpStatus);
     segWrap.appendChild(grpAlerta);
     dataArea.appendChild(segWrap);
@@ -3267,8 +3284,12 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
           if (r.status === 'Abertas' && r.initDate) {
             inatMs = now - r.initDate;
           }
-          var inatAlerta = r.status === 'Abertas' && (r.delivered || 0) === 0 &&
-                           (r.totalPkg || 0) > 0 && rOrh > 40 * 60000;
+          // Inatividade: usa flag real da API se disponível
+          var inatAlerta = r.inactivityAlert ||
+                           (r.status === 'Abertas' &&
+                            (r.delivered || 0) === 0 &&
+                            (r.totalPkg  || 0) > 0   &&
+                            rOrh > 40 * 60000);
 
           var statusColor =
             r.status === 'Encerradas' ? T.ok :
@@ -3303,6 +3324,13 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
           rotaLine.appendChild(mk('span',
             'color:' + orhColor(rOrh, r.status) + ';font-weight:700;font-family:' + T.fMono,
             'ORH: ' + msToHHMM(rOrh)));
+
+          // OZH se disponível
+          if (r.ozhMs && r.ozhMs > 0) {
+            rotaLine.appendChild(mk('span',
+              'color:' + T.muted + ';font-family:' + T.fMono + ';font-size:10px',
+              'OZH: ' + msToHHMM(r.ozhMs)));
+          }
 
           if (inatAlerta) {
             rotaLine.appendChild(mk('span',
@@ -4860,16 +4888,26 @@ function updateCountdown() {
   var API_URL = 'https://envios.adminml.com/logistics/api/monitoring/get-routes-list';
 
   // Extrai o ciclo do campo cluster (T4_CHP -> CHP, T27_PM1 -> PM1, "2873" -> SD)
-  function parseCiclo(cluster) {
+  function parseCiclo(cluster, cycleName) {
+    // Prioridade 1: cycleName direto da API
+    if (cycleName && String(cycleName).trim() !== '') {
+      var cn = String(cycleName).toUpperCase().trim();
+      if (cn.indexOf('CHP') >= 0) return 'CHP';
+      if (cn.indexOf('AM')  >= 0) return 'AM1';
+      if (cn.indexOf('PM')  >= 0) return 'PM1';
+      if (cn.indexOf('SD')  >= 0) return 'SD';
+      return cn;
+    }
+    // Prioridade 2: extrai do cluster (fallback)
     if (!cluster) return '';
     var s = String(cluster).toUpperCase();
     if (s.indexOf('CHP') >= 0) return 'CHP';
     if (s.indexOf('AM1') >= 0) return 'AM1';
+    if (s.indexOf('AM')  >= 0) return 'AM1';
     if (s.indexOf('PM1') >= 0) return 'PM1';
+    if (s.indexOf('PM')  >= 0) return 'PM1';
     if (s.indexOf('SD')  >= 0) return 'SD';
-    // Se só veio número, assume SD
-    if (/^\d+$/.test(s)) return 'SD';
-    return s;
+    return '';
   }
 
   // Normaliza status do ML para o padrão do painel
@@ -4939,8 +4977,8 @@ function updateCountdown() {
       carrier:  r.carrier || '—',
       carrierId: r.carrierId,
       cluster:  r.cluster || '',
-      ciclo:    parseCiclo(r.cluster),
-      cycle:    parseCiclo(r.cluster),
+      ciclo:    parseCiclo(r.cluster, r.plannedRoute && r.plannedRoute.cycleName),
+      cycle:    parseCiclo(r.cluster, r.plannedRoute && r.plannedRoute.cycleName),
       tipo:     r.type || r.deliveryType || 'last_mile',
       modal:    r.vehicle || r.deliveryType || '',
       vehicle:  r.vehicle || '',
@@ -4964,7 +5002,7 @@ function updateCountdown() {
       totalPkg:    c.total        || 0,
       delivered:   c.delivered    || 0,
       failed:      c.notDelivered || 0,
-      pnr:         c.pnr          || 0,
+      pnr: (r.claims && r.claims.length) || c.pnr || 0,
       pending:     c.pending      || 0,
       pendentes:   c.pending      || 0,
       comerciais:  c.business     || 0,
@@ -4973,11 +5011,22 @@ function updateCountdown() {
 
       // Datas — API retorna em SEGUNDOS, converte pra ms
       initDate:    r.initDate    ? r.initDate    * 1000 : null,
-      finalDate:   r.finalDate   ? r.finalDate   * 1000 : null,
+      finalDate:   r.finalDate   && r.finalDate > 0 ? r.finalDate * 1000 : null,
       lastActivityAt: r.lastActivityAt ? r.lastActivityAt * 1000
                      : r.lastDeliveryDate ? r.lastDeliveryDate * 1000
                      : r.lastEventDate   ? r.lastEventDate   * 1000
                      : null,
+
+      // ORH/OZH direto da API (timingData) — em minutos, converte pra ms
+      orhMs:   r.timingData && r.timingData.orh  ? r.timingData.orh  * 60000 : null,
+      ozhMs:   r.timingData && r.timingData.ozh  ? r.timingData.ozh  * 60000 : null,
+      stemOut: r.timingData && r.timingData.stemOut ? r.timingData.stemOut * 60000 : null,
+
+      // Inatividade real da API
+      inactivityAlert:  r.inactivityVehicle && r.inactivityVehicle.alert  || false,
+      inactivityStart:  r.inactivityVehicle && r.inactivityVehicle.startDate > 0
+                          ? r.inactivityVehicle.startDate * 1000 : null,
+      inactivityStatus: r.inactivityVehicle && r.inactivityVehicle.status || '',
 
       // Detalhes (virão de outro endpoint depois)
       failures: [], pnrList: [], returns: [],
