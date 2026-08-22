@@ -531,14 +531,20 @@
     '@keyframes mlm_pulse { 0%,100%{opacity:1} 50%{opacity:.55} }',
     '@keyframes mlm_spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }',
     '@keyframes mlm_glow { 0%,100%{box-shadow:0 0 16px rgba(124,58,237,.3)} 50%{box-shadow:0 0 24px rgba(124,58,237,.6)} }',
-    '@keyframes mlm_beam_rotate { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }',
-    '.mlm_beam_wrap { position:absolute;inset:0;border-radius:16px;pointer-events:none;z-index:0;overflow:hidden; }',
-    '.mlm_beam_track { position:absolute;inset:-2px;border-radius:18px;background:transparent; }',
-    '.mlm_beam_light { position:absolute;width:160px;height:160px;border-radius:50%;' +
-    'background:conic-gradient(from 0deg,transparent 0deg,rgba(124,58,237,.85) 40deg,rgba(6,182,212,.9) 80deg,transparent 120deg);' +
-    'filter:blur(12px);top:50%;left:50%;transform:translate(-50%,-50%);' +
-    'animation:mlm_beam_rotate 3.5s linear infinite;transform-origin:center center; }',
-    '.mlm_beam_mask { position:absolute;inset:2px;border-radius:15px;background:#111116; }',
+    '@keyframes mlm_beam_spin { from{--mlm-beam-angle:0deg} to{--mlm-beam-angle:360deg} }',
+    '@property --mlm-beam-angle { syntax:"<angle>"; inherits:false; initial-value:0deg; }',
+    '@keyframes mlm_beam_move { 0%{offset-distance:0%} 100%{offset-distance:100%} }',
+    '.mlm_beam_wrap { position:absolute;inset:0;border-radius:16px;pointer-events:none;z-index:0; }',
+    '.mlm_beam_border {' +
+      'position:absolute;inset:0;border-radius:16px;' +
+      'background:transparent;' +
+      'padding:1.5px;' +
+      '-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);' +
+      '-webkit-mask-composite:xor;mask-composite:exclude;' +
+      'background-image:conic-gradient(from var(--mlm-beam-angle),transparent 0deg,rgba(124,58,237,.0) 60deg,rgba(124,58,237,.9) 120deg,rgba(6,182,212,1) 160deg,rgba(255,255,255,.8) 180deg,rgba(6,182,212,.4) 200deg,transparent 260deg);' +
+      'animation:mlm_beam_spin 3s linear infinite;' +
+    '}',
+    '.mlm_beam_mask { position:absolute;inset:1.5px;border-radius:15px;background:#111116;z-index:0; }',
     '#mlm_srj3_panel ::-webkit-scrollbar { width:10px; height:10px }',
     '#mlm_srj3_panel ::-webkit-scrollbar-track { background:rgba(15,23,42,.4); border-radius:5px }',
     '#mlm_srj3_panel ::-webkit-scrollbar-thumb { background:rgba(124,58,237,.4); border-radius:5px }',
@@ -614,17 +620,16 @@
   (function injectBeam() {
     var beamWrap = mk('div', '');
     beamWrap.className = 'mlm_beam_wrap';
-    var beamTrack = mk('div', '');
-    beamTrack.className = 'mlm_beam_track';
-    var beamLight = mk('div', '');
-    beamLight.className = 'mlm_beam_light';
+
+    var beamBorder = mk('div', '');
+    beamBorder.className = 'mlm_beam_border';
+
     var beamMask = mk('div', '');
     beamMask.className = 'mlm_beam_mask';
-    beamTrack.appendChild(beamLight);
-    beamWrap.appendChild(beamTrack);
+
+    beamWrap.appendChild(beamBorder);
     beamWrap.appendChild(beamMask);
     panel.appendChild(beamWrap);
-    // Garante que o painel empile corretamente: header e filhos acima da beam
     panel.style.isolation = 'isolate';
   })();
 
@@ -773,22 +778,58 @@
   // KPIs
   var kpiWrap = mk('div',
     'display:grid;grid-template-columns:repeat(6,1fr);gap:10px;padding:14px 18px;' +
-    'background:rgba(15,23,42,.2);border-bottom:1px solid ' + T.border + ';flex-shrink:0');
+    'background:rgba(0,0,0,.2);border-bottom:1px solid rgba(255,255,255,.05);flex-shrink:0');
 
   var KPI_DEFS = [
     { id: 'total',     label: 'Total Pacotes',     accent: T.brand2 },
     { id: 'delivered', label: 'Entregues',         accent: T.ok },
     { id: 'failed',    label: 'Insucessos',        accent: T.err },
     { id: 'pnr',       label: 'PNR',               accent: T.warn },
-    { id: 'running',   label: 'Rotas Andamento',   accent: T.info },
+    { id: 'running',   label: 'Rotas em Andamento',   accent: T.info },
     { id: 'finished',  label: 'Rotas Finalizadas', accent: T.brand }
   ];
   KPI_DEFS.forEach(function (k) {
+    // Extrai RGB do accent para usar no glow
+    var accentRaw = k.accent.replace('#','');
+    var aR = parseInt(accentRaw.slice(0,2),16);
+    var aG = parseInt(accentRaw.slice(2,4),16);
+    var aB = parseInt(accentRaw.slice(4,6),16);
+    var rgb = aR + ',' + aG + ',' + aB;
+
     var card = mk('div',
-      'background:' + T.surface + ';border:1px solid ' + T.border +
-      ';border-left:3px solid ' + k.accent + ';border-radius:10px;padding:12px 14px;' +
-      'position:relative;overflow:hidden;transition:transform .15s ease');
+      'background:#161618;' +
+      'border:1px solid rgba(' + rgb + ',.2);' +
+      'border-radius:14px;padding:14px 16px;' +
+      'position:relative;overflow:hidden;' +
+      'transition:box-shadow .2s ease,border-color .2s ease,transform .15s ease;' +
+      'box-shadow:0 2px 12px rgba(0,0,0,.4);');
     card.className = 'mlm_hover_lift';
+
+    // Glow spot no canto superior direito (igual aos cards da imagem)
+    var glowSpot = mk('div','');
+    glowSpot.style.cssText =
+      'position:absolute;top:-40px;right:-40px;width:140px;height:140px;border-radius:50%;' +
+      'background:radial-gradient(circle,rgba(' + rgb + ',.18) 0%,transparent 65%);' +
+      'pointer-events:none;z-index:0;';
+    card.appendChild(glowSpot);
+
+    // Linha de accent no topo (em vez de esquerda)
+    var topLine = mk('div','');
+    topLine.style.cssText =
+      'position:absolute;top:0;left:0;right:0;height:2px;' +
+      'background:linear-gradient(90deg,transparent,rgba(' + rgb + ',.8),transparent);' +
+      'border-radius:14px 14px 0 0;';
+    card.appendChild(topLine);
+
+    // Hover
+    card.onmouseenter = function(){
+      this.style.boxShadow = '0 0 0 1px rgba(' + rgb + ',.35),0 8px 28px rgba(' + rgb + ',.12)';
+      this.style.borderColor = 'rgba(' + rgb + ',.4)';
+    };
+    card.onmouseleave = function(){
+      this.style.boxShadow = '0 2px 12px rgba(0,0,0,.4)';
+      this.style.borderColor = 'rgba(' + rgb + ',.2)';
+    };
     card.id = 'mlm_srj3_kpi_' + k.id;
     var lbl = mk('div',
       'font-size:10px;color:' + T.muted + ';font-weight:600;letter-spacing:.5px;' +
