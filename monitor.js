@@ -531,20 +531,7 @@
     '@keyframes mlm_pulse { 0%,100%{opacity:1} 50%{opacity:.55} }',
     '@keyframes mlm_spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }',
     '@keyframes mlm_glow { 0%,100%{box-shadow:0 0 16px rgba(124,58,237,.3)} 50%{box-shadow:0 0 24px rgba(124,58,237,.6)} }',
-    '@keyframes mlm_beam_spin { from{--mlm-beam-angle:0deg} to{--mlm-beam-angle:360deg} }',
-    '@property --mlm-beam-angle { syntax:"<angle>"; inherits:false; initial-value:0deg; }',
-    '@keyframes mlm_beam_move { 0%{offset-distance:0%} 100%{offset-distance:100%} }',
-    '.mlm_beam_wrap { position:absolute;inset:0;border-radius:16px;pointer-events:none;z-index:0; }',
-    '.mlm_beam_border {' +
-      'position:absolute;inset:0;border-radius:16px;' +
-      'background:transparent;' +
-      'padding:1.5px;' +
-      '-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);' +
-      '-webkit-mask-composite:xor;mask-composite:exclude;' +
-      'background-image:conic-gradient(from var(--mlm-beam-angle),transparent 0deg,rgba(124,58,237,.0) 60deg,rgba(124,58,237,.9) 120deg,rgba(6,182,212,1) 160deg,rgba(255,255,255,.8) 180deg,rgba(6,182,212,.4) 200deg,transparent 260deg);' +
-      'animation:mlm_beam_spin 3s linear infinite;' +
-    '}',
-    '.mlm_beam_mask { position:absolute;inset:1.5px;border-radius:15px;background:#111116;z-index:0; }',
+    '@keyframes mlm_beam_rotate { from{transform:translate(-50%,-50%) rotate(0deg)} to{transform:translate(-50%,-50%) rotate(360deg)} }',
     '#mlm_srj3_panel ::-webkit-scrollbar { width:10px; height:10px }',
     '#mlm_srj3_panel ::-webkit-scrollbar-track { background:rgba(15,23,42,.4); border-radius:5px }',
     '#mlm_srj3_panel ::-webkit-scrollbar-thumb { background:rgba(124,58,237,.4); border-radius:5px }',
@@ -617,19 +604,39 @@
   panel.id = 'mlm_srj3_panel';
   APP.panel = panel;
   // Borda beam — efeito de luz girando
+  // Borda beam — 100% vanilla, sem @property, funciona em qualquer Chrome
   (function injectBeam() {
-    var beamWrap = mk('div', '');
-    beamWrap.className = 'mlm_beam_wrap';
+    var wrap = mk('div', '');
+    wrap.style.cssText =
+      'position:absolute;inset:0;border-radius:16px;' +
+      'pointer-events:none;z-index:0;overflow:hidden;';
 
-    var beamBorder = mk('div', '');
-    beamBorder.className = 'mlm_beam_border';
+    var spinner = mk('div', '');
+    spinner.style.cssText =
+      'position:absolute;' +
+      'width:200%;height:200%;' +
+      'top:50%;left:50%;' +
+      'transform:translate(-50%,-50%) rotate(0deg);' +
+      'background:conic-gradient(' +
+        'transparent 0deg,' +
+        'transparent 55deg,' +
+        'rgba(124,58,237,0.0) 70deg,' +
+        'rgba(124,58,237,0.85) 110deg,' +
+        'rgba(6,182,212,1.0) 145deg,' +
+        'rgba(255,255,255,0.95) 162deg,' +
+        'rgba(6,182,212,0.5) 178deg,' +
+        'transparent 215deg,' +
+        'transparent 360deg' +
+      ');' +
+      'animation:mlm_beam_rotate 3s linear infinite;';
 
-    var beamMask = mk('div', '');
-    beamMask.className = 'mlm_beam_mask';
+    var mask = mk('div', '');
+    mask.style.cssText =
+      'position:absolute;inset:2px;border-radius:14px;background:#111116;z-index:1;';
 
-    beamWrap.appendChild(beamBorder);
-    beamWrap.appendChild(beamMask);
-    panel.appendChild(beamWrap);
+    wrap.appendChild(spinner);
+    wrap.appendChild(mask);
+    panel.appendChild(wrap);
     panel.style.isolation = 'isolate';
   })();
 
