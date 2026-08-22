@@ -608,36 +608,67 @@
   (function injectBeam() {
     var wrap = mk('div', '');
     wrap.style.cssText =
-      'position:absolute;inset:0;border-radius:16px;' +
-      'pointer-events:none;z-index:0;overflow:hidden;';
+      'position:fixed;' +
+      'border-radius:16px;' +
+      'pointer-events:none;' +
+      'z-index:' + (T.z - 1) + ';' +
+      'overflow:hidden;' +
+      'top:0;left:0;width:100%;height:100%;';
+
+    // Atualiza posição/tamanho do wrap para sempre cobrir o painel
+    function syncBeam() {
+      var rect = panel.getBoundingClientRect();
+      wrap.style.top    = rect.top  + 'px';
+      wrap.style.left   = rect.left + 'px';
+      wrap.style.width  = rect.width  + 'px';
+      wrap.style.height = rect.height + 'px';
+    }
 
     var spinner = mk('div', '');
     spinner.style.cssText =
       'position:absolute;' +
-      'width:200%;height:200%;' +
+      'width:300%;height:300%;' +
       'top:50%;left:50%;' +
       'transform:translate(-50%,-50%) rotate(0deg);' +
       'background:conic-gradient(' +
         'transparent 0deg,' +
-        'transparent 55deg,' +
-        'rgba(124,58,237,0.0) 70deg,' +
-        'rgba(124,58,237,0.85) 110deg,' +
+        'transparent 50deg,' +
+        'rgba(124,58,237,0.6) 90deg,' +
+        'rgba(124,58,237,1.0) 115deg,' +
         'rgba(6,182,212,1.0) 145deg,' +
-        'rgba(255,255,255,0.95) 162deg,' +
-        'rgba(6,182,212,0.5) 178deg,' +
-        'transparent 215deg,' +
+        'rgba(255,255,255,1.0) 160deg,' +
+        'rgba(6,182,212,0.8) 175deg,' +
+        'rgba(124,58,237,0.3) 200deg,' +
+        'transparent 230deg,' +
         'transparent 360deg' +
       ');' +
       'animation:mlm_beam_rotate 3s linear infinite;';
 
     var mask = mk('div', '');
     mask.style.cssText =
-      'position:absolute;inset:4px;border-radius:14px;background:#111116;z-index:1;';
+      'position:absolute;inset:4px;border-radius:14px;' +
+      'background:#111116;z-index:1;';
 
     wrap.appendChild(spinner);
     wrap.appendChild(mask);
-    panel.appendChild(wrap);
+    document.body.appendChild(wrap); // ← vai pro body, não pro painel!
     panel.style.isolation = 'isolate';
+
+    // Sincroniza posição com o painel (drag, resize, zoom)
+    var rafId;
+    function loop() {
+      syncBeam();
+      rafId = requestAnimationFrame(loop);
+    }
+    loop();
+
+    // Para o loop quando o painel for destruído
+    var origDestroy = APP.destroy;
+    APP.destroy = function() {
+      cancelAnimationFrame(rafId);
+      if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      origDestroy.apply(APP, arguments);
+    };
   })();
 
   var header = mk('div',
