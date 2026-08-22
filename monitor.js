@@ -39,9 +39,9 @@
   }
 
   var T = {
-    bg: '#0a0e1a', bgPurple: '#1e1b4b',
-    surface: 'rgba(17,24,39,.85)', surface2: 'rgba(30,27,75,.6)',
-    surfaceHi: 'rgba(31,41,55,.95)',
+    bg: '#111116', bgPurple: '#18181f',
+    surface: 'rgba(22,22,28,.92)', surface2: 'rgba(26,26,34,.7)',
+    surfaceHi: 'rgba(28,28,36,.98)',
     border: 'rgba(148,163,184,.15)', borderHi: 'rgba(124,58,237,.35)',
     text: '#e2e8f0', textHi: '#f1f5f9',
     muted: '#94a3b8', mutedHi: '#cbd5e1',
@@ -538,7 +538,7 @@
     'background:conic-gradient(from 0deg,transparent 0deg,rgba(124,58,237,.85) 40deg,rgba(6,182,212,.9) 80deg,transparent 120deg);' +
     'filter:blur(12px);top:50%;left:50%;transform:translate(-50%,-50%);' +
     'animation:mlm_beam_rotate 3.5s linear infinite;transform-origin:center center; }',
-    '.mlm_beam_mask { position:absolute;inset:2px;border-radius:15px;background:linear-gradient(135deg,#0a0e1a 0%,#1e1b4b 100%); }',
+    '.mlm_beam_mask { position:absolute;inset:2px;border-radius:15px;background:#111116; }',
     '#mlm_srj3_panel ::-webkit-scrollbar { width:10px; height:10px }',
     '#mlm_srj3_panel ::-webkit-scrollbar-track { background:rgba(15,23,42,.4); border-radius:5px }',
     '#mlm_srj3_panel ::-webkit-scrollbar-thumb { background:rgba(124,58,237,.4); border-radius:5px }',
@@ -573,9 +573,9 @@
     '.mlm_tab_btn_gooey { position:relative; z-index:2; background:transparent; border:none; color:' + T.mutedHi + '; padding:8px 16px; border-radius:20px; cursor:pointer; font-size:12px; font-weight:600; transition:color .25s ease; text-transform:uppercase; white-space:nowrap; }',
     '.mlm_tab_btn_gooey.mlm_tab_active { color:#fff; }',
     '.mlm_tab_btn_gooey:not(.mlm_tab_active):hover { color:' + T.textHi + '; }',
-    '.mlm_tab_btn_other { background:' + T.surface + '; border:1px solid ' + T.border + '; color:' + T.mutedHi + '; padding:8px 16px; border-radius:20px; cursor:pointer; font-size:12px; font-weight:600; transition:all .2s ease; text-transform:uppercase; white-space:nowrap; }',
-    '.mlm_tab_btn_other.mlm_tab_active { background:' + T.grad + ' !important; color:#fff !important; box-shadow:' + T.glow + '; border-color:transparent; }',
-    '.mlm_tab_btn_other:not(.mlm_tab_active):hover { border-color:' + T.borderHi + '; color:' + T.textHi + '; background:rgba(124,58,237,.08); }',
+    '.mlm_tab_btn_other { background:transparent; border:none; color:rgba(255,255,255,.45); padding:8px 18px; border-radius:20px; cursor:pointer; font-size:11px; font-weight:700; transition:all .22s cubic-bezier(.4,0,.2,1); text-transform:uppercase; white-space:nowrap; letter-spacing:.4px; }',
+    '.mlm_tab_btn_other.mlm_tab_active { background:' + T.grad + ' !important; color:#fff !important; box-shadow:0 0 20px rgba(124,58,237,.45),0 4px 12px rgba(0,0,0,.4); }',
+    '.mlm_tab_btn_other:not(.mlm_tab_active):hover { background:rgba(255,255,255,.07); color:rgba(255,255,255,.8); }',
     '#mlm_srj3_panel > *:not(.mlm_beam_wrap) { position:relative; z-index:1; }'
   ].join('\n');
   document.head.appendChild(styleEl);
@@ -602,7 +602,7 @@
   // ==========================================================================
   var panel = mk('div',
     'position:fixed;top:60px;left:60px;width:1180px;max-height:88vh;' +
-    'background:linear-gradient(135deg,' + T.bg + ' 0%,' + T.bgPurple + ' 100%);' +
+    'background:' + T.bg + ';' +
     'border:1px solid ' + T.border + ';border-radius:16px;box-shadow:' + T.shadow + ';' +
     'color:' + T.text + ';font-family:' + T.fUI + ';font-size:13px;' +
     'z-index:' + T.z + ';display:flex;flex-direction:column;overflow:hidden;' +
@@ -1543,62 +1543,22 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
 
   // ABAS
   var TABS = [
-    { id: 'ROTAS',      label: 'Rotas',         gooey: true },
-    { id: 'OFENSORAS',  label: 'Ofensoras',      gooey: true },
-    { id: 'INSUCESSOS', label: 'Insucessos',     gooey: true },
+    { id: 'ROTAS',      label: 'Rotas',         gooey: false },
+    { id: 'OFENSORAS',  label: 'Ofensoras',      gooey: false },
+    { id: 'INSUCESSOS', label: 'Insucessos',     gooey: false },
     { id: 'MOTORISTAS', label: 'Motoristas',     gooey: false },
-    { id: 'DOBRANDO',   label: 'Dobrando 🔄',    gooey: false },
-    { id: 'ORH',        label: 'ORH ⏱',          gooey: false },
+    { id: 'DOBRANDO',   label: 'Dobrando',    gooey: false },
+    { id: 'ORH',        label: 'ORH',          gooey: false },
     { id: 'AGENCIAS',   label: 'Agências',       gooey: false }
   ];
 
   var tabsBar = mk('div',
-    'display:flex;gap:6px;padding:12px 18px 0 18px;background:rgba(15,23,42,.2);' +
-    'flex-shrink:0;flex-wrap:wrap;align-items:center');
+    'display:flex;gap:2px;padding:10px 18px;background:rgba(0,0,0,.25);' +
+    'flex-shrink:0;flex-wrap:wrap;align-items:center;' +
+    'border-bottom:1px solid rgba(255,255,255,.06);');
 
-  // ── Grupo GOOEY (Rotas / Ofensoras / Insucessos) ──────────────────────
-  var GOOEY_TABS = TABS.filter(function(t){ return t.gooey; });
-
-  var gooeyOuter = mk('div',
-    'position:relative;display:flex;border-radius:24px;padding:3px;' +
-    'background:rgba(15,23,42,.5);border:1px solid ' + T.border);
-  gooeyOuter.id = 'mlm_tabs_gooey_outer';
-
-  // Camada com filter gooey (indicador + botões fantasma para medição)
-  var gooeyLayer = mk('div',
-    'position:absolute;inset:3px;border-radius:21px;overflow:hidden;pointer-events:none;' +
-    'filter:url(#mlm_gooey_filter)');
-  gooeyLayer.id = 'mlm_tabs_gooey_layer';
-
-  // Indicador deslizante
-  var gooeyIndicator = mk('div', '');
-  gooeyIndicator.id = 'mlm_tabs_gooey_indicator';
-  gooeyIndicator.style.cssText =
-    'position:absolute;top:0;height:100%;border-radius:20px;' +
-    'background:' + T.grad + ';' +
-    'transition:left .42s cubic-bezier(.4,0,.2,1), width .42s cubic-bezier(.4,0,.2,1);' +
-    'will-change:left,width;';
-  gooeyLayer.appendChild(gooeyIndicator);
-  gooeyOuter.appendChild(gooeyLayer);
-
-  // Botões reais (z-index acima do filter pra texto não ficar borrado)
-  var gooeyBtnWrap = mk('div', 'position:relative;z-index:2;display:flex;');
-  gooeyBtnWrap.id = 'mlm_tabs_gooey_btnwrap';
-
-  GOOEY_TABS.forEach(function(tab) {
-    var btn = mk('button', '', escapeHTML(tab.label));
-    btn.className = 'mlm_tab_btn_gooey';
-    btn.dataset.tab = tab.id;
-    if (tab.id === STATE.tab) btn.classList.add('mlm_tab_active');
-    btn.onclick = function() { switchTab(tab.id); };
-    gooeyBtnWrap.appendChild(btn);
-  });
-
-  gooeyOuter.appendChild(gooeyBtnWrap);
-  tabsBar.appendChild(gooeyOuter);
-
-  // ── Abas restantes (estilo original) ──────────────────────────────────
-  TABS.filter(function(t){ return !t.gooey; }).forEach(function(tab) {
+    // ── Todas as abas no estilo pill unificado ─────────────────────────────
+  TABS.forEach(function(tab) {
     var btn = mk('button', '', escapeHTML(tab.label));
     btn.className = 'mlm_tab_btn_other';
     btn.dataset.tab = tab.id;
@@ -1663,8 +1623,7 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
       if (b.dataset.tab === tabId) b.classList.add('mlm_tab_active');
       else b.classList.remove('mlm_tab_active');
     });
-    // Move o indicador gooey
-    updateGooeyIndicator(tabId);
+    
     // Fecha dropdowns
     document.querySelectorAll('[data-mlm-dropdown="1"]').forEach(function(d) {
       d.style.display = 'none';
@@ -1860,9 +1819,10 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     }
 
     var wrap = mk('div',
-      'background:rgba(15,23,42,.5);border:1px solid ' + T.border +
-      ';border-radius:10px;padding:10px 12px;margin-bottom:12px;' +
-      'display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end');
+      'background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);' +
+      'border-radius:12px;padding:12px 14px;margin-bottom:12px;' +
+      'display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;' +
+      'backdrop-filter:blur(12px);');
     wrap.dataset.mlmFiltersbar = '1';
 
     function multiSel(label, key, opts) {
@@ -1879,10 +1839,12 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
           : count + ' selecionados';
 
       var btn = mk('button',
-        'background:' + T.surface + ';border:1px solid ' + (count > 0 ? T.brand : T.border) +
-        ';color:' + (count > 0 ? T.textHi : T.mutedHi) +
-        ';padding:6px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-family:' + T.fUI +
-        ';display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:30px',
+        'background:rgba(255,255,255,.05);' +
+        'border:1px solid ' + (count > 0 ? 'rgba(124,58,237,.6)' : 'rgba(255,255,255,.1)') +
+        ';color:' + (count > 0 ? '#fff' : 'rgba(255,255,255,.55)') +
+        ';padding:6px 12px;border-radius:8px;font-size:11px;cursor:pointer;font-family:' + T.fUI +
+        ';display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:32px;' +
+        'transition:all .15s ease;',
         '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px">' +
         escapeHTML(btnLabel) + '</span>' +
         '<span style="opacity:.6;display:inline-flex">' + ICON.chevD + '</span>');
@@ -1997,7 +1959,8 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     function txtInput(label, key, type) {
       var box = mk('div', 'display:flex;flex-direction:column;gap:3px;min-width:110px');
       box.appendChild(mk('label',
-        'font-size:9px;color:' + T.muted + ';font-weight:600;text-transform:uppercase;letter-spacing:.5px',
+        'font-size:9px;color:rgba(255,255,255,.35);font-weight:700;text-transform:uppercase;' +
+        'letter-spacing:.8px;margin-bottom:2px;display:block',
         escapeHTML(label)));
       var inp = mk('input',
         'background:' + T.surface + ';border:1px solid ' + T.border + ';color:' + T.textHi +
@@ -2041,9 +2004,13 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     wrap.appendChild(txtInput('Placa',          'placa'));
     wrap.appendChild(rankSel());
 
-    var btnClear = mk('button', '', '<span>Limpar</span>');
-    btnClear.className = 'mlm_btn mlm_btn_err';
-    btnClear.style.alignSelf = 'flex-end';
+    var btnClear = mk('button', '', '<span>Limpar filtros</span>');
+    btnClear.style.cssText =
+      'background:transparent;border:1px solid rgba(239,68,68,.4);color:rgba(239,68,68,.8);' +
+      'padding:6px 14px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:600;' +
+      'align-self:flex-end;transition:all .15s ease;font-family:' + T.fUI;
+    btnClear.onmouseenter = function(){ this.style.background='rgba(239,68,68,.12)'; this.style.borderColor='rgba(239,68,68,.7)'; this.style.color='#ef4444'; };
+    btnClear.onmouseleave = function(){ this.style.background='transparent'; this.style.borderColor='rgba(239,68,68,.4)'; this.style.color='rgba(239,68,68,.8)'; };
     btnClear.onclick = function () {
       g.status.clear(); g.tipo.clear(); g.modal.clear(); g.carrier.clear();
       g.driver.clear(); g.ciclo.clear(); g.origem.clear();
@@ -2244,9 +2211,30 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
         (r.status === 'FINISHED' || r.status === 'FINALIZADA') ? T.ok :
         (r.status === 'IN_PROGRESS' || r.status === 'RUNNING') ? T.info : T.muted;
 
+      var glowClr = r.status === 'Encerradas' ? '16,185,129' :
+                    r.status === 'Abertas'     ? '124,58,237' : '6,182,212';
       var card = mk('div',
-        'background:' + T.surface + ';border:1px solid ' + T.border +
-        ';border-left:3px solid ' + statusColor + ';border-radius:10px;padding:12px 14px');
+        'background:rgba(22,22,28,.95);' +
+        'border:1px solid rgba(' + glowClr + ',.18);' +
+        'border-radius:14px;padding:14px 16px;' +
+        'box-shadow:0 0 0 0 transparent, inset 0 1px 0 rgba(255,255,255,.04);' +
+        'transition:box-shadow .2s ease,border-color .2s ease;' +
+        'position:relative;overflow:hidden;');
+      // Glow no canto superior
+      var glowSpot = mk('div','');
+      glowSpot.style.cssText =
+        'position:absolute;top:-30px;right:-30px;width:120px;height:120px;border-radius:50%;' +
+        'background:radial-gradient(circle,rgba(' + glowClr + ',.22) 0%,transparent 70%);' +
+        'pointer-events:none;';
+      card.appendChild(glowSpot);
+      card.onmouseenter = function(){
+        this.style.boxShadow = '0 0 0 1px rgba(' + glowClr + ',.35),0 8px 32px rgba(' + glowClr + ',.15)';
+        this.style.borderColor = 'rgba(' + glowClr + ',.4)';
+      };
+      card.onmouseleave = function(){
+        this.style.boxShadow = '0 0 0 0 transparent,inset 0 1px 0 rgba(255,255,255,.04)';
+        this.style.borderColor = 'rgba(' + glowClr + ',.18)';
+      };
 
       // Linha 1 — Rota + tags
       var line1 = mk('div', 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px');
@@ -5773,12 +5761,7 @@ APP.retryPendingDetails = retryPendingRouteDetails;
     STATE.ui.openDropdown = null;
   });
   document.body.appendChild(panel);
-  // Posiciona o indicador gooey — duplo rAF garante que o layout já foi calculado
-  requestAnimationFrame(function() {
-    requestAnimationFrame(function() {
-      updateGooeyIndicator(STATE.tab);
-    });
-  });
+    
   renderKPIs();
   renderActiveTab();
   startRefreshTimer();
