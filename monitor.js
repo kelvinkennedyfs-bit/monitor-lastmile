@@ -142,6 +142,170 @@
     });
   }
 
+  // ==========================================================================
+  // BOTÃO COPIAR ANIMADO (estilo HoverTerminal)
+  // ==========================================================================
+  function makeCopyBtn(opts) {
+    // opts: { getContent: fn, preview: string, label: string }
+    // preview = texto curto exibido no hover (truncado)
+    // label   = texto do estado idle (padrão: "Copiar")
+    // getContent = função que retorna o texto a ser copiado
+
+    var IDLE_W    = '120px';
+    var HOVER_W   = '320px';
+    var COPIED_W  = '130px';
+    var ANIM_DUR  = '0.35s';
+
+    var state = 'idle';  // 'idle' | 'hovered' | 'copied'
+    var _copiedTimer = null;
+
+    // Container externo (ocupa apenas o espaço do botão)
+    var wrap = mk('div',
+      'position:relative;display:inline-flex;align-items:center;' +
+      'justify-content:center;overflow:hidden;border-radius:8px;');
+
+    // O botão principal
+    var btn = mk('button', '');
+    btn.style.cssText =
+      'position:relative;display:inline-flex;align-items:center;justify-content:center;' +
+      'height:34px;width:' + IDLE_W + ';overflow:hidden;border-radius:8px;cursor:pointer;' +
+      'font-family:' + T.fUI + ';font-size:12px;font-weight:600;' +
+      'border:none;transition:width ' + ANIM_DUR + ' cubic-bezier(.4,0,.2,1),' +
+      'background ' + ANIM_DUR + ' ease,border-color ' + ANIM_DUR + ' ease;' +
+      'background:' + T.grad + ';color:#fff;white-space:nowrap;';
+
+    // --- Camada IDLE ---
+    var layerIdle = mk('div',
+      'position:absolute;display:flex;align-items:center;gap:6px;' +
+      'transition:opacity .15s ease,transform .15s ease;pointer-events:none;');
+    layerIdle.innerHTML = ICON.copy +
+      '<span style="color:#fff">' + escapeHTML(opts.label || 'Copiar') + '</span>';
+
+    // --- Camada HOVER (terminal) ---
+    var layerHover = mk('div',
+      'position:absolute;display:flex;align-items:center;gap:6px;' +
+      'padding:0 12px;width:100%;overflow:hidden;' +
+      'transition:opacity .15s ease,transform .15s ease;pointer-events:none;' +
+      'opacity:0;transform:translateY(-14px);');
+
+    var termIcon = mk('span',
+      'color:rgba(255,255,255,.55);display:inline-flex;flex-shrink:0;', ICON.copy);
+    var termTilde = mk('span',
+      'color:rgba(255,255,255,.45);font-family:' + T.fMono + ';flex-shrink:0;', '~');
+    var termText  = mk('span',
+      'font-family:' + T.fMono + ';font-size:11px;color:rgba(255,255,255,.9);' +
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;',
+      escapeHTML(opts.preview || 'copiar mensagem'));
+    var termCursor = mk('span', '');
+    termCursor.style.cssText =
+      'display:inline-block;width:6px;height:12px;background:rgba(255,255,255,.85);' +
+      'margin-left:3px;vertical-align:middle;flex-shrink:0;border-radius:1px;' +
+      'animation:mlm_cursor_blink .8s step-end infinite;';
+
+    layerHover.appendChild(termIcon);
+    layerHover.appendChild(termTilde);
+    layerHover.appendChild(termText);
+    layerHover.appendChild(termCursor);
+
+    // --- Camada COPIED ---
+    var layerCopied = mk('div',
+      'position:absolute;display:flex;align-items:center;gap:6px;' +
+      'transition:opacity .15s ease,transform .15s ease;pointer-events:none;' +
+      'opacity:0;transform:scale(.85);');
+    layerCopied.innerHTML =
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+      '<polyline points="20 6 9 17 4 12"/></svg>' +
+      '<span>Copiado!</span>';
+
+    btn.appendChild(layerIdle);
+    btn.appendChild(layerHover);
+    btn.appendChild(layerCopied);
+
+    // --- Helpers de transição ---
+    function setIdle() {
+      state = 'idle';
+      btn.style.width = IDLE_W;
+      btn.style.background = T.grad;
+      // Idle visível
+      layerIdle.style.opacity  = '1';
+      layerIdle.style.transform = 'translateY(0) scale(1)';
+      // Hover oculto
+      layerHover.style.opacity  = '0';
+      layerHover.style.transform = 'translateY(-14px)';
+      // Copied oculto
+      layerCopied.style.opacity  = '0';
+      layerCopied.style.transform = 'scale(.85)';
+    }
+
+    function setHovered() {
+      if (state === 'copied') return;
+      state = 'hovered';
+      btn.style.width = HOVER_W;
+      btn.style.background = 'linear-gradient(135deg,#6d28d9 0%,#0891b2 100%)'; // ligeiramente mais escuro
+      // Idle oculto
+      layerIdle.style.opacity  = '0';
+      layerIdle.style.transform = 'translateY(14px)';
+      // Hover visível
+      layerHover.style.opacity  = '1';
+      layerHover.style.transform = 'translateY(0)';
+      // Copied oculto
+      layerCopied.style.opacity  = '0';
+      layerCopied.style.transform = 'scale(.85)';
+    }
+
+    function setCopied() {
+      state = 'copied';
+      btn.style.width = COPIED_W;
+      btn.style.background = 'linear-gradient(135deg,#059669 0%,#0d9488 100%)';
+      // Idle oculto
+      layerIdle.style.opacity  = '0';
+      layerIdle.style.transform = 'translateY(14px)';
+      // Hover oculto
+      layerHover.style.opacity  = '0';
+      layerHover.style.transform = 'translateY(-14px)';
+      // Copied visível
+      layerCopied.style.opacity  = '1';
+      layerCopied.style.transform = 'scale(1)';
+      // Volta pra idle após 2s
+      if (_copiedTimer) clearTimeout(_copiedTimer);
+      _copiedTimer = setTimeout(setIdle, 2000);
+    }
+
+    // --- Eventos ---
+    btn.onmouseenter = function () { setHovered(); };
+    btn.onmouseleave = function () { if (state !== 'copied') setIdle(); };
+    btn.onclick = function () {
+      var conteudo = typeof opts.getContent === 'function' ? opts.getContent() : '';
+      if (!conteudo) { toast('Nada para copiar', 'warn'); return; }
+      copyText(conteudo).then(function () {
+        setCopied();
+        if (opts.onCopied) opts.onCopied();
+      }).catch(function () {
+        try {
+          var ta = document.createElement('textarea');
+          ta.value = conteudo; ta.style.cssText = 'position:fixed;top:-9999px;opacity:0';
+          document.body.appendChild(ta); ta.select();
+          var ok = document.execCommand('copy');
+          document.body.removeChild(ta);
+          if (ok) { setCopied(); if (opts.onCopied) opts.onCopied(); }
+          else toast('Selecione e use Ctrl+C', 'warn');
+        } catch (e2) { toast('Falha ao copiar', 'err'); }
+      });
+    };
+
+    // Estado inicial
+    setIdle();
+    wrap.appendChild(btn);
+
+    // API pública: permite atualizar o preview text
+    wrap._btn = btn;
+    wrap._updatePreview = function (txt) {
+      termText.textContent = txt || '';
+    };
+
+    return wrap;
+  }
   function toastContainer() {
     var c = document.getElementById('mlm_srj3_toasts');
     if (!c) {
@@ -367,6 +531,14 @@
     '@keyframes mlm_pulse { 0%,100%{opacity:1} 50%{opacity:.55} }',
     '@keyframes mlm_spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }',
     '@keyframes mlm_glow { 0%,100%{box-shadow:0 0 16px rgba(124,58,237,.3)} 50%{box-shadow:0 0 24px rgba(124,58,237,.6)} }',
+    '@keyframes mlm_beam_rotate { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }',
+    '.mlm_beam_wrap { position:absolute;inset:0;border-radius:16px;pointer-events:none;z-index:0;overflow:hidden; }',
+    '.mlm_beam_track { position:absolute;inset:-2px;border-radius:18px;background:transparent; }',
+    '.mlm_beam_light { position:absolute;width:160px;height:160px;border-radius:50%;' +
+    'background:conic-gradient(from 0deg,transparent 0deg,rgba(124,58,237,.85) 40deg,rgba(6,182,212,.9) 80deg,transparent 120deg);' +
+    'filter:blur(12px);top:50%;left:50%;transform:translate(-50%,-50%);' +
+    'animation:mlm_beam_rotate 3.5s linear infinite;transform-origin:center center; }',
+    '.mlm_beam_mask { position:absolute;inset:2px;border-radius:15px;background:linear-gradient(135deg,#0a0e1a 0%,#1e1b4b 100%); }',
     '#mlm_srj3_panel ::-webkit-scrollbar { width:10px; height:10px }',
     '#mlm_srj3_panel ::-webkit-scrollbar-track { background:rgba(15,23,42,.4); border-radius:5px }',
     '#mlm_srj3_panel ::-webkit-scrollbar-thumb { background:rgba(124,58,237,.4); border-radius:5px }',
@@ -391,9 +563,40 @@
     '.mlm_btn_warn { border-color:' + T.warn + '; color:' + T.warn + ' }',
     '.mlm_btn_warn:hover { background:rgba(245,158,11,.1); color:' + T.warn + ' }',
     '.mlm_btn_err { border-color:' + T.err + '; color:' + T.err + ' }',
-    '.mlm_btn_err:hover { background:rgba(239,68,68,.1); color:' + T.err + ' }'
+    '.mlm_btn_err:hover { background:rgba(239,68,68,.1); color:' + T.err + ' }',
+    '@keyframes mlm_cursor_blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }',
+    '.mlm_copybtn_wrap { position:relative; display:inline-flex; align-items:center; justify-content:center; overflow:hidden; }',
+    '.mlm_copybtn_cursor { display:inline-block; width:7px; height:13px; background:currentColor; margin-left:4px; vertical-align:middle; animation:mlm_cursor_blink .8s step-end infinite; border-radius:1px; flex-shrink:0; }',
+    '.mlm_tabs_gooey_wrap { position:relative; }',
+    '.mlm_tabs_gooey_layer { position:absolute; inset:0; pointer-events:none; }',
+    '.mlm_tab_indicator { position:absolute; top:0; height:100%; border-radius:20px; background:' + T.grad + '; transition:left .4s cubic-bezier(.4,0,.2,1), width .4s cubic-bezier(.4,0,.2,1); will-change:left,width; }',
+    '.mlm_tab_btn_gooey { position:relative; z-index:2; background:transparent; border:none; color:' + T.mutedHi + '; padding:8px 16px; border-radius:20px; cursor:pointer; font-size:12px; font-weight:600; transition:color .25s ease; text-transform:uppercase; white-space:nowrap; }',
+    '.mlm_tab_btn_gooey.mlm_tab_active { color:#fff; }',
+    '.mlm_tab_btn_gooey:not(.mlm_tab_active):hover { color:' + T.textHi + '; }',
+    '.mlm_tab_btn_other { background:' + T.surface + '; border:1px solid ' + T.border + '; color:' + T.mutedHi + '; padding:8px 16px; border-radius:20px; cursor:pointer; font-size:12px; font-weight:600; transition:all .2s ease; text-transform:uppercase; white-space:nowrap; }',
+    '.mlm_tab_btn_other.mlm_tab_active { background:' + T.grad + ' !important; color:#fff !important; box-shadow:' + T.glow + '; border-color:transparent; }',
+    '.mlm_tab_btn_other:not(.mlm_tab_active):hover { border-color:' + T.borderHi + '; color:' + T.textHi + '; background:rgba(124,58,237,.08); }',
+    '#mlm_srj3_panel > *:not(.mlm_beam_wrap) { position:relative; z-index:1; }'
   ].join('\n');
   document.head.appendChild(styleEl);
+  // SVG Gooey Filter — funde as bordas do indicador de aba
+  (function injectGooeyFilter() {
+    if (document.getElementById('mlm_gooey_svg')) return;
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.id = 'mlm_gooey_svg';
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;';
+    svg.innerHTML =
+      '<defs>' +
+        '<filter id="mlm_gooey_filter" x="-20%" y="-50%" width="140%" height="200%">' +
+          '<feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur"/>' +
+          '<feColorMatrix in="blur" mode="matrix" ' +
+            'values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -9" result="gooey"/>' +
+          '<feComposite in="SourceGraphic" in2="gooey" operator="atop"/>' +
+        '</filter>' +
+      '</defs>';
+    document.body.appendChild(svg);
+  })();
   // ==========================================================================
   // BUILD DO PAINEL
   // ==========================================================================
@@ -407,9 +610,26 @@
     'animation:mlm_slideUp .3s ease-out');
   panel.id = 'mlm_srj3_panel';
   APP.panel = panel;
+  // Borda beam — efeito de luz girando
+  (function injectBeam() {
+    var beamWrap = mk('div', '');
+    beamWrap.className = 'mlm_beam_wrap';
+    var beamTrack = mk('div', '');
+    beamTrack.className = 'mlm_beam_track';
+    var beamLight = mk('div', '');
+    beamLight.className = 'mlm_beam_light';
+    var beamMask = mk('div', '');
+    beamMask.className = 'mlm_beam_mask';
+    beamTrack.appendChild(beamLight);
+    beamWrap.appendChild(beamTrack);
+    beamWrap.appendChild(beamMask);
+    panel.appendChild(beamWrap);
+    // Garante que o painel empile corretamente: header e filhos acima da beam
+    panel.style.isolation = 'isolate';
+  })();
 
   var header = mk('div',
-    'display:flex;align-items:center;gap:14px;padding:14px 18px;background:' + T.surface +
+    'position:relative;z-index:1;display:flex;align-items:center;gap:14px;padding:14px 18px;background:' + T.surface +
     ';border-bottom:1px solid ' + T.border + ';cursor:move;user-select:none;flex-shrink:0');
   header.id = 'mlm_srj3_header';
 
@@ -1323,28 +1543,84 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
 
   // ABAS
   var TABS = [
-    { id: 'ROTAS',      label: 'Rotas' },
-    { id: 'OFENSORAS',  label: 'Ofensoras' },
-    { id: 'INSUCESSOS', label: 'Insucessos' },
-    { id: 'MOTORISTAS', label: 'Motoristas' },
-    { id: 'DOBRANDO',   label: 'Dobrando 🔄' },
-    { id: 'ORH',        label: 'ORH ⏱' },
-    { id: 'AGENCIAS',   label: 'Agências' }
+    { id: 'ROTAS',      label: 'Rotas',         gooey: true },
+    { id: 'OFENSORAS',  label: 'Ofensoras',      gooey: true },
+    { id: 'INSUCESSOS', label: 'Insucessos',     gooey: true },
+    { id: 'MOTORISTAS', label: 'Motoristas',     gooey: false },
+    { id: 'DOBRANDO',   label: 'Dobrando 🔄',    gooey: false },
+    { id: 'ORH',        label: 'ORH ⏱',          gooey: false },
+    { id: 'AGENCIAS',   label: 'Agências',       gooey: false }
   ];
+
   var tabsBar = mk('div',
     'display:flex;gap:6px;padding:12px 18px 0 18px;background:rgba(15,23,42,.2);' +
-    'flex-shrink:0;flex-wrap:wrap');
-  TABS.forEach(function (tab) {
-    var btn = mk('button',
-      'background:' + T.surface + ';border:1px solid ' + T.border + ';color:' + T.mutedHi +
-      ';padding:8px 16px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:600;' +
-      'transition:all .2s ease;text-transform:uppercase', escapeHTML(tab.label));
+    'flex-shrink:0;flex-wrap:wrap;align-items:center');
+
+  // ── Grupo GOOEY (Rotas / Ofensoras / Insucessos) ──────────────────────
+  var GOOEY_TABS = TABS.filter(function(t){ return t.gooey; });
+
+  var gooeyOuter = mk('div',
+    'position:relative;display:flex;border-radius:24px;padding:3px;' +
+    'background:rgba(15,23,42,.5);border:1px solid ' + T.border);
+  gooeyOuter.id = 'mlm_tabs_gooey_outer';
+
+  // Camada com filter gooey (indicador + botões fantasma para medição)
+  var gooeyLayer = mk('div',
+    'position:absolute;inset:3px;border-radius:21px;overflow:hidden;pointer-events:none;' +
+    'filter:url(#mlm_gooey_filter)');
+  gooeyLayer.id = 'mlm_tabs_gooey_layer';
+
+  // Indicador deslizante
+  var gooeyIndicator = mk('div', '');
+  gooeyIndicator.id = 'mlm_tabs_gooey_indicator';
+  gooeyIndicator.style.cssText =
+    'position:absolute;top:0;height:100%;border-radius:20px;' +
+    'background:' + T.grad + ';' +
+    'transition:left .42s cubic-bezier(.4,0,.2,1), width .42s cubic-bezier(.4,0,.2,1);' +
+    'will-change:left,width;';
+  gooeyLayer.appendChild(gooeyIndicator);
+  gooeyOuter.appendChild(gooeyLayer);
+
+  // Botões reais (z-index acima do filter pra texto não ficar borrado)
+  var gooeyBtnWrap = mk('div', 'position:relative;z-index:2;display:flex;');
+  gooeyBtnWrap.id = 'mlm_tabs_gooey_btnwrap';
+
+  GOOEY_TABS.forEach(function(tab) {
+    var btn = mk('button', '', escapeHTML(tab.label));
+    btn.className = 'mlm_tab_btn_gooey';
     btn.dataset.tab = tab.id;
     if (tab.id === STATE.tab) btn.classList.add('mlm_tab_active');
-    btn.onclick = function () { switchTab(tab.id); };
+    btn.onclick = function() { switchTab(tab.id); };
+    gooeyBtnWrap.appendChild(btn);
+  });
+
+  gooeyOuter.appendChild(gooeyBtnWrap);
+  tabsBar.appendChild(gooeyOuter);
+
+  // ── Abas restantes (estilo original) ──────────────────────────────────
+  TABS.filter(function(t){ return !t.gooey; }).forEach(function(tab) {
+    var btn = mk('button', '', escapeHTML(tab.label));
+    btn.className = 'mlm_tab_btn_other';
+    btn.dataset.tab = tab.id;
+    if (tab.id === STATE.tab) btn.classList.add('mlm_tab_active');
+    btn.onclick = function() { switchTab(tab.id); };
     tabsBar.appendChild(btn);
   });
+
   panel.appendChild(tabsBar);
+
+  // Posiciona o indicador gooey na aba inicial
+  function updateGooeyIndicator(tabId) {
+    var btnWrap = document.getElementById('mlm_tabs_gooey_btnwrap');
+    var indicator = document.getElementById('mlm_tabs_gooey_indicator');
+    if (!btnWrap || !indicator) return;
+    var activeBtn = btnWrap.querySelector('[data-tab="' + tabId + '"]');
+    if (!activeBtn) return; // aba não é gooey, não move
+    var wrapRect = btnWrap.getBoundingClientRect();
+    var btnRect  = activeBtn.getBoundingClientRect();
+    indicator.style.left  = (btnRect.left - wrapRect.left) + 'px';
+    indicator.style.width = btnRect.width + 'px';
+  }
 
   // Container principal: filtros (fixos) + área de dados (atualizada por refresh)
   var content = mk('div',
@@ -1377,18 +1653,24 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
  function switchTab(tabId) {
     STATE.tab = tabId;
     Prefs.save();
-    // Atualiza visual dos botões de aba
-    $$('button[data-tab]', tabsBar).forEach(function (b) {
+    // Atualiza visual — gooey
+    $$('button.mlm_tab_btn_gooey[data-tab]', tabsBar).forEach(function(b) {
       if (b.dataset.tab === tabId) b.classList.add('mlm_tab_active');
       else b.classList.remove('mlm_tab_active');
     });
-    // Fecha qualquer dropdown aberto
-    document.querySelectorAll('[data-mlm-dropdown="1"]').forEach(function (d) {
+    // Atualiza visual — outros botões
+    $$('button.mlm_tab_btn_other[data-tab]', tabsBar).forEach(function(b) {
+      if (b.dataset.tab === tabId) b.classList.add('mlm_tab_active');
+      else b.classList.remove('mlm_tab_active');
+    });
+    // Move o indicador gooey
+    updateGooeyIndicator(tabId);
+    // Fecha dropdowns
+    document.querySelectorAll('[data-mlm-dropdown="1"]').forEach(function(d) {
       d.style.display = 'none';
     });
     STATE.ui.openDropdown = null;
     clearRefreshPending();
-    // Re-renderiza filtros + dados da nova aba
     renderActiveTab();
   }
 
@@ -3703,34 +3985,12 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     ta.value = textoWA;
     modal.body.appendChild(ta);
 
-    var btnCopiar = mk('button', '', ICON.copy + '<span>Copiar</span>');
-    btnCopiar.style.cssText = 'background:' + T.grad + ';border:none;color:#fff;padding:8px 16px;' +
-      'border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;' +
-      'align-items:center;gap:6px';
-    btnCopiar.onclick = function () {
-      // Garante que pega o valor atual do textarea (caso usuário tenha editado)
-      var conteudo = ta.value;
-      if (!conteudo) { toast('Nada para copiar', 'warn'); return; }
-      // Fallback robusto: tenta clipboard API, depois execCommand
-      try {
-        ta.focus();
-        ta.select();
-        ta.setSelectionRange(0, 99999);
-      } catch (e) {}
-      copyText(conteudo).then(function () {
-        toast('Mensagem copiada!', 'ok');
-      }).catch(function (err) {
-        // Fallback final: execCommand
-        try {
-          ta.focus(); ta.select();
-          var ok = document.execCommand('copy');
-          if (ok) toast('Mensagem copiada!', 'ok');
-          else toast('Selecione e use Ctrl+C', 'warn');
-        } catch (e2) {
-          toast('Falha ao copiar: ' + (err && err.message || 'erro'), 'err');
-        }
-      });
-    };
+    var btnCopiar = makeCopyBtn({
+      label:      'Copiar',
+      preview:    'Report Hora a Hora',
+      getContent: function () { return ta.value; },
+      onCopied:   function () { toast('Mensagem copiada!', 'ok'); }
+    });
     var btnFechar = mk('button', '', '<span>Fechar</span>');
     btnFechar.className = 'mlm_btn';
     btnFechar.onclick = modal.close;
@@ -4136,14 +4396,12 @@ row.appendChild(tableCell(cDsPct.toFixed(2) + '%', {
     [inpOperador, inpObs, inpAcoes, inpPendencia].forEach(function (el) { el.oninput = refresh; });
 
     // === BOTÕES DO RODAPÉ ===
-    var btnCopiar = mk('button', '', ICON.copy + '<span>Copiar</span>');
-    btnCopiar.style.cssText = 'background:' + T.grad + ';border:none;color:#fff;padding:8px 16px;' +
-      'border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;' +
-      'align-items:center;gap:6px';
-    btnCopiar.onclick = function () {
-      copyText(buildText()).then(function () { toast('Fechamento copiado', 'ok'); })
-        .catch(function () { toast('Falha ao copiar', 'err'); });
-    };
+    var btnCopiar = makeCopyBtn({
+      label:      'Copiar',
+      preview:    'Fechamento ' + STATE.ssc,
+      getContent: buildText,
+      onCopied:   function () { toast('Fechamento copiado', 'ok'); }
+    });
     var btnPDF = mk('button', '', ICON.print + '<span>Exportar PDF</span>');
     btnPDF.className = 'mlm_btn mlm_btn_warn';
     btnPDF.onclick = function () {
@@ -5515,6 +5773,12 @@ APP.retryPendingDetails = retryPendingRouteDetails;
     STATE.ui.openDropdown = null;
   });
   document.body.appendChild(panel);
+  // Posiciona o indicador gooey — duplo rAF garante que o layout já foi calculado
+  requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
+      updateGooeyIndicator(STATE.tab);
+    });
+  });
   renderKPIs();
   renderActiveTab();
   startRefreshTimer();
