@@ -632,7 +632,7 @@
 
     var mask = mk('div', '');
     mask.style.cssText =
-      'position:absolute;inset:8px;border-radius:12px;background:#111116;z-index:1;';
+      'position:absolute;inset:4px;border-radius:14px;background:#111116;z-index:1;';
 
     wrap.appendChild(spinner);
     wrap.appendChild(mask);
